@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Bench Plugin
 // @namespace    http://tampermonkey.net/
-// @version      10.1.0
+// @version      3.0.0
 // @description  Bench plugin for DevTools Sidebar — manual or captured request benchmarking with concurrency, warmup, and a results sparkline.
 // @author       MrNosferatu
 // ==/UserScript==

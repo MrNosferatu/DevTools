@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      10.1.0
+// @version      3.0.0
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -871,11 +871,29 @@ const CSS = `
   .dt-kb-reset:hover { background:var(--rd-bg); color:var(--rd); }
   .dt-kb-reset-hidden { visibility:hidden; }
 
-  /* ── Hold-to-intercept button ────────────────────────────────────────────── */
-  .dt-hold-btn { width:100%; display:flex; align-items:center; justify-content:center; gap:8px; padding:11px 14px; margin-bottom:10px; border:1.5px solid var(--am-bd); border-radius:9px; background:var(--am-bg); color:var(--am); font-size:13px; font-weight:600; cursor:pointer; user-select:none; -webkit-user-select:none; touch-action:none; transition:transform .08s var(--ease),box-shadow .15s,background .15s,border-color .15s; }
-  .dt-hold-btn:hover { border-color:var(--am); }
-  .dt-hold-btn.holding { background:var(--am); color:#fff; border-color:var(--am); transform:translateY(1px) scale(.99); box-shadow:0 0 0 3px var(--am-bd) inset; }
-  .dt-hold-btn svg { flex-shrink:0; }
+  /* ── Edit Memory: in-modal suggestion chips ──────────────────────────────── */
+  .dt-edit-suggest { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:8px; padding:8px 10px; border:1px solid var(--vi-bd); border-radius:8px; background:var(--vi-bg); }
+  .dt-es-label { width:100%; font-size:10px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--vi); margin-bottom:2px; }
+  .dt-es-chip { display:inline-flex; align-items:center; gap:8px; max-width:100%; padding:4px 4px 4px 10px; border:1px solid var(--vi-bd); border-radius:7px; background:var(--bg); color:var(--tx2); font-size:11px; cursor:pointer; transition:all .13s; }
+  .dt-es-chip:hover { border-color:var(--vi); color:var(--tx); }
+  .dt-es-chip-txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dt-es-apply { flex-shrink:0; font-size:10px; font-weight:600; color:#fff; background:var(--vi); border-radius:5px; padding:2px 7px; }
+
+  /* ── Edit Memory: management list (Network panel) ─────────────────────────── */
+  .dt-edit-mem-list { display:flex; flex-direction:column; gap:6px; max-height:240px; overflow-y:auto; }
+  .dt-edit-mem-empty { font-size:11px; color:var(--mu); line-height:1.5; padding:6px 2px; }
+  .dt-edit-mem-item { display:flex; align-items:flex-start; gap:8px; padding:8px 9px; border:1px solid var(--bd); border-radius:8px; background:var(--sf); }
+  .dt-edit-mem-main { flex:1; min-width:0; }
+  .dt-edit-mem-sum { font-size:12px; font-weight:500; color:var(--tx); line-height:1.35; word-break:break-word; }
+  .dt-edit-mem-meta { display:flex; align-items:center; gap:5px; flex-wrap:wrap; font-size:10.5px; color:var(--mu); margin-top:3px; }
+  .dt-edit-mem-path { font-family:'IBM Plex Mono',monospace; }
+  .dt-edit-mem-ns { font-family:'IBM Plex Mono',monospace; font-size:9px; font-weight:700; letter-spacing:.05em; padding:1px 4px; border-radius:4px; }
+  .dt-edit-mem-ns-req { color:var(--am); background:var(--am-bg); }
+  .dt-edit-mem-ns-res { color:var(--vi); background:var(--vi-bg); }
+  .dt-edit-mem-del { flex-shrink:0; width:24px; height:24px; display:flex; align-items:center; justify-content:center; border:none; background:transparent; color:var(--mu); border-radius:6px; cursor:pointer; transition:all .15s; }
+  .dt-edit-mem-del:hover { background:var(--rd-bg); color:var(--rd); }
+  .dt-edit-mem-clear { display:flex; align-items:center; justify-content:center; gap:6px; width:100%; margin-top:8px; padding:7px; border:1px solid var(--bd); border-radius:7px; background:transparent; color:var(--rd); font-size:11px; font-weight:500; cursor:pointer; transition:all .15s; }
+  .dt-edit-mem-clear:hover { background:var(--rd-bg); border-color:var(--rd-bd); }
 
   /* ── Hotkey toast ─────────────────────────────────────────────────────────── */
   #dt-hotkey-toast { position:fixed; z-index:2147483646; bottom:24px; left:50%; transform:translateX(-50%) translateY(10px); display:flex; align-items:center; gap:9px; padding:10px 16px; border-radius:10px; background:rgba(22,23,27,.94); color:#f4f5fa; font-family:'IBM Plex Sans',system-ui,sans-serif; font-size:13px; font-weight:500; letter-spacing:.01em; box-shadow:0 8px 30px rgba(0,0,0,.35); backdrop-filter:blur(6px); opacity:0; pointer-events:none; transition:opacity .18s var(--ease,ease),transform .18s var(--ease,ease); }

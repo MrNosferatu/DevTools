@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — API Recorder Plugin
 // @namespace    http://tampermonkey.net/
-// @version      10.1.0
+// @version      3.0.0
 // @description  API Recorder plugin for DevTools Sidebar — passively documents endpoint shapes and exports/pushes them as a Postman collection.
 // @author       MrNosferatu
 // ==/UserScript==

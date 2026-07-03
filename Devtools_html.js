@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — HTML
 // @namespace    http://tampermonkey.net/
-// @version      10.1.0
+// @version      3.0.0
 // @description  HTML template builders for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -33,6 +33,8 @@ const DT_ICON_PATHS = {
   swap:        '<polyline points="17 2 21 6 17 10"/><path d="M3 6h18"/><polyline points="7 22 3 18 7 14"/><path d="M21 18H3"/>',
   gauge:       '<path d="M12 21a9 9 0 1 1 9-9"/><path d="M12 12l4-2"/>',
   palette:     '<circle cx="12" cy="12" r="9"/><circle cx="8" cy="9.5" r="1"/><circle cx="15.5" cy="9" r="1"/><circle cx="16" cy="14" r="1"/><path d="M12 21a3 3 0 0 1 0-6 2 2 0 0 0 0-4 9 9 0 0 0 0 10z"/>',
+  clock:       '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>',
+  trash:       '<polyline points="3 6 5 6 21 6"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
 };
 function icon(name, size = 14, sw = 1.8) {
   return `<svg class="dt-ico" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${DT_ICON_PATHS[name] || ''}</svg>`;
@@ -79,14 +81,6 @@ function buildNetworkPanel() {
       <div class="dt-slabel"><span class="dt-slabel-ico">${icon('globe',12,2)}</span>Global Filter</div>
       <div class="dt-note dt-note-tight">Sets methods &amp; URL matching for <em>both</em> interceptors at once. Fine-tune each below to override.</div>
       ${buildFilterBlock('net')}
-    </div>
-
-    <div class="dt-section">
-      <div class="dt-slabel"><span class="dt-slabel-ico">${icon('zap',12,2)}</span>Quick Intercept</div>
-      <button class="dt-hold-btn" id="dt-hold-intercept" type="button">
-        ${icon('zap',14,2)}<span>Hold to Intercept</span>
-      </button>
-      <div class="dt-note dt-note-tight">Press and hold (this button, or the <em>Hold to Intercept</em> shortcut) to intercept Request + Response only while held — the Intercept toggles below are left unchanged.</div>
     </div>
 
     <div class="dt-section dt-section-accent-req">
@@ -140,6 +134,22 @@ function buildNetworkPanel() {
         <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="2"/><path d="M6.5 1v1.5M6.5 10.5V12M1 6.5h1.5M10.5 6.5H12M2.6 2.6l1.1 1.1M9.3 9.3l1.1 1.1M9.3 2.6l-1.1 1.1M3.7 9.3l-1.1 1.1"/></svg>
         Manage Presets
       </button>
+    </div>
+
+    <div class="dt-section">
+      <div class="dt-slabel"><span class="dt-slabel-ico">${icon('clock',12,2)}</span>Edit Memory ${tip('Every time you edit an intercepted request/response body and Send, the change is auto-detected (added/removed/renamed keys, type transforms like string→array, value changes) and saved to localStorage — so it survives a browser restart. Open an intercept modal and matching edits appear as one-click "Apply" chips above the editor.')}</div>
+      <div class="dt-note dt-note-tight">Detected edits are saved here and offered as one-click "Apply" suggestions inside the intercept modals. Stored in localStorage — kept until you delete them.</div>
+      <div class="dt-disclosure open" id="dt-edit-mem-disc">
+        <button class="dt-disclosure-hd" data-disc="edit-mem" type="button">
+          <span class="dt-disclosure-arrow">${icon('chevronRight',13,2.2)}</span>
+          <span>Saved edits</span>
+          <span class="dt-disclosure-hint" id="dt-edit-mem-count"></span>
+        </button>
+        <div class="dt-disclosure-body">
+          <div class="dt-edit-mem-list" id="dt-edit-mem-list"></div>
+          <button class="dt-edit-mem-clear" id="dt-edit-mem-clear">${icon('trash',12,2)}<span>Clear all</span></button>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -355,6 +365,7 @@ const HTML = `
               </button>
             </div>
             ${buildEditorHTML('dt-req-ed')}
+            <div class="dt-edit-suggest" id="dt-req-edit-suggest" style="display:none"></div>
             <div class="dt-body-suggestions" id="dt-req-body-suggestions" style="display:none"></div>
           </div>
           <div id="dt-req-params-section" class="dt-params-section" style="display:none">
@@ -411,6 +422,7 @@ const HTML = `
               </button>
             </div>
             ${buildEditorHTML('dt-res-ed')}
+            <div class="dt-edit-suggest" id="dt-res-edit-suggest" style="display:none"></div>
           </div>
           <div id="dt-res-gui" class="dt-transform-section" style="display:none">
             <div class="dt-transform-note">Click a key in the tree to select a path. Then choose an action to apply to the response.</div>

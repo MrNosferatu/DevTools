@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      10.2.5
+// @version      3.0.0
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -12,15 +12,12 @@
 // @grant        GM_addValueChangeListener
 // @grant        unsafeWindow
 // @run-at       document-start
-// @require http://127.0.0.1:8421/Devtools_constants.js
-// @require http://127.0.0.1:8421/Devtools_plugins.js
-// @require http://127.0.0.1:8421/Devtools_css.js
-// @require http://127.0.0.1:8421/Devtools_html.js
-// @require http://127.0.0.1:8421/Devtools_recorder.js
-// @require http://127.0.0.1:8421/Devtools_monitor.js
-// @require http://127.0.0.1:8421/Devtools_baseurl.js
-// @require http://127.0.0.1:8421/Devtools_bench.js
 // ==/UserScript==
+//
+// NOTE: This file is the MAIN body and is loaded as the LAST @require by the
+// installable entry script, Devtools.user.js. Install/host that file — its
+// header owns the real @require list, @version, and @update/@downloadURL.
+// Tampermonkey ignores the metadata block above when this file is @require'd.
 
 (function () {
   'use strict';
@@ -59,6 +56,16 @@
     _t: {},
     setSoon(k, v, ms) { clearTimeout(this._t[k]); this._t[k] = setTimeout(() => { this._t[k] = null; this.set(k, v); }, ms || 300); }
   };
+
+  // ─── Edit Memory store (localStorage) ─────────────────────────────────────────
+  // Deliberately localStorage (not GM storage / sessionStorage): the user wants
+  // recorded edits to survive a browser restart, and to be removable one-by-one
+  // or all at once from the UI. Kept separate from `Store` so it's trivially
+  // clearable and never entangled with the interceptor's own settings.
+  const EDIT_MEM_KEY = '__dt_edit_memory';
+  const EDIT_MEM_MAX = 40; // cap so the list (and localStorage) can't grow unbounded
+  function loadEditMemory() { try { const v = localStorage.getItem(EDIT_MEM_KEY); return v ? JSON.parse(v) : []; } catch { return []; } }
+  function saveEditMemory(arr) { try { localStorage.setItem(EDIT_MEM_KEY, JSON.stringify(arr)); } catch {} }
 
   // ─── State ────────────────────────────────────────────────────────────────────
   const state = {
@@ -108,6 +115,7 @@
       holdIntercept: Store.get('keybinds.holdIntercept', 'Alt+S'),
     },
     _captureKeybind: null, // set while the settings UI is recording a new combo
+    editMemory: loadEditMemory(), // recent request/response edits (see Edit Memory)
     reqSearch: { term:'', matchIndex:0, matches:[] },
     resSearch: { term:'', matchIndex:0, matches:[] },
     pendingReqs: [],
@@ -205,7 +213,27 @@
   }
 
   // ─── Inject ───────────────────────────────────────────────────────────────────
+  // ─── Critical flash-guard ─────────────────────────────────────────────────────
+  // A tiny stylesheet injected as early as possible (document-start), long before
+  // the ~80KB main stylesheet is parsed. It hides every top-level element until
+  // it's explicitly revealed with .dt-ready. Why this is needed: the main
+  // stylesheet's own `visibility:hidden` rules only prevent a flash if they're
+  // applied in the SAME frame the elements first paint — but on a cold (uncached)
+  // load the big stylesheet can land a frame late, and a host page's own CSS can
+  // override a non-!important rule. This rule is trivially fast to parse and uses
+  // !important, so neither race can let the UI paint for even one frame. Once
+  // .dt-ready is added the `:not(.dt-ready)` selector stops matching and the
+  // normal (transitioned) styles take over.
+  function injectCriticalHide() {
+    if (!document.documentElement || document.getElementById('dt-critical-hide')) return;
+    const s = document.createElement('style');
+    s.id = 'dt-critical-hide';
+    s.textContent = '#dt-sidebar:not(.dt-ready),#dt-tab:not(.dt-ready),#dt-req-overlay:not(.dt-ready),#dt-res-overlay:not(.dt-ready),#dt-presets-overlay:not(.dt-ready),#dt-save-preset-overlay:not(.dt-ready),#dt-baseurl-fab:not(.dt-ready){visibility:hidden!important;}';
+    document.documentElement.appendChild(s);
+  }
+
   function inject() {
+    injectCriticalHide(); // safety: ensure the guard exists before any element is inserted
     const style = document.createElement('style');
     style.textContent = CSS;
     document.documentElement.appendChild(style);
@@ -797,15 +825,10 @@
     // arrive — end the hold defensively so intercept doesn't get stuck on.
     realWindow.addEventListener('blur', endHold);
 
-    // Network panel "Hold to Intercept" button — momentary, same as the hold
-    // keybind. pointerdown/up covers mouse, touch, and pen; pointerleave/cancel
-    // guard against a release that lands outside the button.
-    const holdBtn = $('dt-hold-intercept');
-    if (holdBtn) {
-      holdBtn.addEventListener('pointerdown', e => { e.preventDefault(); beginHold([]); });
-      ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev =>
-        holdBtn.addEventListener(ev, () => endHold()));
-    }
+    // Edit Memory management (Network panel)
+    const memClear = $('dt-edit-mem-clear');
+    if (memClear) memClear.addEventListener('click', clearEditMemory);
+    renderEditMemoryList();
 
     // Portal tooltip — the tip text is rendered into #dt-tip-portal appended
     // directly to <html>, OUTSIDE #dt-sidebar. The sidebar has a `transform`
@@ -950,6 +973,11 @@
     // either list (a real row's key field) or editor (body JSON) edits.
     $('dt-req-params-list').addEventListener('input', e => { if (e.target.dataset.role === 'key') pruneParamSuggestions('dt-req-params-list'); });
     $('dt-req-ed').addEventListener('input', () => renderBodySuggestions(state._lastReqDocSuggestions ? state._lastReqDocSuggestions.body : null));
+    // Re-evaluate applicable Edit Memory suggestions as the body is edited (its
+    // shape can change what matches). Debounced lightly so typing stays smooth.
+    let _reqSugT, _resSugT;
+    $('dt-req-ed').addEventListener('input', () => { clearTimeout(_reqSugT); _reqSugT=setTimeout(()=>renderEditSuggestions('req'), 250); });
+    $('dt-res-ed').addEventListener('input', () => { clearTimeout(_resSugT); _resSugT=setTimeout(()=>renderEditSuggestions('res'), 250); });
     bindEditor('dt-req-ed','reqSearch');
     bindEditor('dt-res-ed','resSearch');
     $('dt-req-modal').addEventListener('keydown', e => { if((e.ctrlKey||e.metaKey)&&e.key==='f'){e.preventDefault();openSearch('dt-req-ed');} });
@@ -1789,6 +1817,7 @@
   // ─── Request Modal ────────────────────────────────────────────────────────────
   function showReqModal(req) {
     const ov=$('dt-req-overlay');
+    state.currentReq=req; // used by Edit Memory to scope suggestions to this endpoint
     $('dt-req-url').textContent=req.url;
     const mt=$('dt-req-method');mt.textContent=req.method;mt.className=`dt-method-tag ${req.method}`;
     const isGET=req.method==='GET';
@@ -1810,6 +1839,7 @@
       $('dt-req-editor-section').style.display='flex';$('dt-req-params-section').style.display='none';
       $('dt-req-ed').value=body;updateBadge('dt-req-ed');renderHL('dt-req-ed','reqSearch','');
       renderBodySuggestions(docSuggestions ? docSuggestions.body : null);
+      renderEditSuggestions('req');
     }
     // Show/hide cURL button: only useful for POST/PUT/PATCH where the editor is visible
     const curlBtn = $('dt-req-copy-curl');
@@ -1825,7 +1855,7 @@
     $('dt-req-count').textContent=`${state.pendingReqs.indexOf(req)+1} of ${state.pendingReqs.length}`;
     ov.classList.add('visible');
     bindModalActions('dt-req-send','dt-req-abort',
-      () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);const editedHeaders=collectHeaders('dt-req-hinner');if(isGET)req.resolve({editedUrl:buildEditedUrl(req.url,'dt-req-params-list'),editedHeaders});else req.resolve({editedBody:$('dt-req-ed').value,editedHeaders});if(state.pendingReqs.length>0)showReqModal(state.pendingReqs[0]); },
+      () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);const editedHeaders=collectHeaders('dt-req-hinner');if(isGET)req.resolve({editedUrl:buildEditedUrl(req.url,'dt-req-params-list'),editedHeaders});else{recordEditFromModal('req',req.url,req.method,req.body,$('dt-req-ed').value);req.resolve({editedBody:$('dt-req-ed').value,editedHeaders});}if(state.pendingReqs.length>0)showReqModal(state.pendingReqs[0]); },
       () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);req.reject(new DOMException('Aborted by DevTools','AbortError'));if(state.pendingReqs.length>0)showReqModal(state.pendingReqs[0]); }
     );
     // Skip — pass original through unmodified
@@ -1887,6 +1917,7 @@
     $('dt-res-wrap-key').style.display='none';
     let body=res.body||'';try{body=JSON.stringify(JSON.parse(body),null,2);}catch{}
     $('dt-res-ed').value=body;updateBadge('dt-res-ed');renderHL('dt-res-ed','resSearch','');
+    renderEditSuggestions('res');
     populateHeaders('dt-res-hinner','dt-res-hcount',res.headers,'dt-res-hrevert');
     // Body revert
     const resRevert=$('dt-res-ed-revert');
@@ -1898,10 +1929,248 @@
     updateTransformPreview();
     ov.classList.add('visible');
     bindModalActions('dt-res-send','dt-res-abort',
-      () => { ov.classList.remove('visible');removeFromQueue('pendingRes',res);res.resolve($('dt-res-ed').value);if(state.pendingRes.length>0)showResModal(state.pendingRes[0]); },
+      () => { ov.classList.remove('visible');removeFromQueue('pendingRes',res);recordEditFromModal('res',res.url,res.method,res.body,$('dt-res-ed').value);res.resolve($('dt-res-ed').value);if(state.pendingRes.length>0)showResModal(state.pendingRes[0]); },
       () => { ov.classList.remove('visible');removeFromQueue('pendingRes',res);res.resolve(res.body);if(state.pendingRes.length>0)showResModal(state.pendingRes[0]); }
     );
   }
+
+  // ─── Edit Memory: diff → classify → apply ─────────────────────────────────────
+  // Records what changed between the original body and the user's edited body,
+  // classifies each change (add/remove/rename/type-transform/value), remembers it
+  // in localStorage, and offers a one-click button to replay the same change on
+  // the current data. Structural ops (add/remove/rename) generalize cleanly; type
+  // transforms are re-derived from the CURRENT value (e.g. re-split a string),
+  // and are only recognized when the before/after matches a known operation.
+
+  function jType(v) { if (Array.isArray(v)) return 'array'; if (v === null) return 'null'; return typeof v; }
+  function deepEqual(a, b) {
+    if (a === b) return true;
+    if (jType(a) !== jType(b)) return false;
+    if (Array.isArray(a)) { if (a.length !== b.length) return false; for (let i=0;i<a.length;i++) if (!deepEqual(a[i],b[i])) return false; return true; }
+    if (a && typeof a === 'object') {
+      const ak=Object.keys(a), bk=Object.keys(b);
+      if (ak.length !== bk.length) return false;
+      for (const k of ak) { if (!Object.prototype.hasOwnProperty.call(b,k) || !deepEqual(a[k],b[k])) return false; }
+      return true;
+    }
+    return false;
+  }
+  function pathGet(obj, path) { let cur=obj; for (const k of path) { if (cur==null || typeof cur!=='object') return undefined; cur=cur[k]; } return cur; }
+  function pathExists(obj, path) { let cur=obj; for (const k of path) { if (cur==null || typeof cur!=='object' || !(k in cur)) return false; cur=cur[k]; } return true; }
+  function setPath(obj, path, value) {
+    let cur=obj;
+    for (let i=0;i<path.length-1;i++) { const k=path[i]; if (cur[k]==null || typeof cur[k]!=='object') cur[k]= typeof path[i+1]==='number'?[]:{}; cur=cur[k]; }
+    cur[path[path.length-1]]=value;
+  }
+  function pathLabel(path) { return path.map((k,i)=> typeof k==='number' ? `[${k}]` : (i? '.'+k : k)).join(''); }
+  function shortVal(v) { let s; try { s=JSON.stringify(v); } catch { s=String(v); } if (s==null) s=String(v); return s.length>24 ? s.slice(0,23)+'…' : s; }
+  function truncate(s,n) { return s.length>n ? s.slice(0,n-1)+'…' : s; }
+
+  // Structural diff → JSON-Patch-ish ops.
+  function diffJson(before, after, path=[]) {
+    if (deepEqual(before, after)) return [];
+    const tb=jType(before), ta=jType(after);
+    if (tb!==ta || (tb!=='object' && tb!=='array')) return [{op:'replace', path, from:before, to:after}];
+    const ops=[];
+    if (tb==='array') {
+      const n=Math.max(before.length, after.length);
+      for (let i=0;i<n;i++) {
+        if (i>=before.length) ops.push({op:'add', path:[...path,i], value:after[i]});
+        else if (i>=after.length) ops.push({op:'remove', path:[...path,i], value:before[i]});
+        else ops.push(...diffJson(before[i], after[i], [...path,i]));
+      }
+      return ops;
+    }
+    for (const k of Object.keys(before)) {
+      if (!(k in after)) ops.push({op:'remove', path:[...path,k], value:before[k]});
+      else ops.push(...diffJson(before[k], after[k], [...path,k]));
+    }
+    for (const k of Object.keys(after)) if (!(k in before)) ops.push({op:'add', path:[...path,k], value:after[k]});
+    return ops;
+  }
+
+  // Recognize a value transform from one before→after example. Only unambiguous
+  // mappings become named transforms; everything else falls back to a literal set.
+  function detectTransform(from, to) {
+    if (typeof from==='string' && Array.isArray(to)) {
+      for (const d of [', ', ',', ';', '|', '\n', ' ']) {
+        if (deepEqual(from.split(d), to)) return { kind:'split', arg:d, note:`split on "${d==='\n'?'\\n':d}"` };
+        if (deepEqual(from.split(d).map(s=>s.trim()), to)) return { kind:'splitTrim', arg:d, note:`split+trim on "${d}"` };
+      }
+      if (deepEqual([from], to)) return { kind:'wrap', note:'wrap in array' };
+      try { if (deepEqual(JSON.parse(from), to)) return { kind:'jsonParse', note:'JSON.parse' }; } catch {}
+    }
+    if (Array.isArray(from) && typeof to==='string') {
+      for (const d of [', ', ',', ';', '|', ' ']) if (from.join(d)===to) return { kind:'join', arg:d, note:`join on "${d}"` };
+    }
+    if (typeof from==='string' && typeof to==='number' && String(Number(from))===String(to)) return { kind:'toNumber', note:'to number' };
+    if (typeof from==='number' && typeof to==='string' && String(from)===to) return { kind:'toString', note:'to string' };
+    return { kind:'set', note:'set value' };
+  }
+
+  // Merge remove+add-of-same-value into renames, then tag each op with a type +
+  // human-readable display string.
+  function classifyOps(rawOps) {
+    const used=new Set(), result=[];
+    const sameParent=(a,b)=> a.length===b.length && a.every((x,i)=>x===b[i]);
+    for (let i=0;i<rawOps.length;i++) {
+      if (used.has(i) || rawOps[i].op!=='remove') continue;
+      const rm=rawOps[i], parent=rm.path.slice(0,-1);
+      for (let j=0;j<rawOps.length;j++) {
+        if (j===i || used.has(j)) continue;
+        const ad=rawOps[j];
+        if (ad.op==='add' && sameParent(ad.path.slice(0,-1), parent) && deepEqual(ad.value, rm.value)) {
+          used.add(i); used.add(j);
+          const from=rm.path[rm.path.length-1], to=ad.path[ad.path.length-1];
+          result.push({ type:'rename', parent, from, to, display:`Rename "${from}" → "${to}"` });
+          break;
+        }
+      }
+    }
+    for (let i=0;i<rawOps.length;i++) {
+      if (used.has(i)) continue;
+      const o=rawOps[i], label=pathLabel(o.path);
+      if (o.op==='remove') result.push({ type:'remove', path:o.path, display:`Delete "${label}"` });
+      else if (o.op==='add') result.push({ type:'add', path:o.path, value:o.value, display:`Add "${label}"` });
+      else if (o.op==='replace') {
+        const tb=jType(o.from), ta=jType(o.to);
+        if (tb!==ta) { const tr=detectTransform(o.from,o.to); result.push({ type:'transform', path:o.path, transform:tr.kind, arg:tr.arg, to:o.to, display:`"${label}": ${tb} → ${ta}${tr.note?' ('+tr.note+')':''}` }); }
+        else result.push({ type:'replace', path:o.path, from:o.from, to:o.to, display:`Change "${label}": ${shortVal(o.from)} → ${shortVal(o.to)}` });
+      }
+    }
+    return result;
+  }
+
+  function applyTransform(op, cur) {
+    switch (op.transform) {
+      case 'split':     return typeof cur==='string' ? cur.split(op.arg) : undefined;
+      case 'splitTrim': return typeof cur==='string' ? cur.split(op.arg).map(s=>s.trim()) : undefined;
+      case 'wrap':      return [cur];
+      case 'jsonParse': try { return typeof cur==='string' ? JSON.parse(cur) : undefined; } catch { return undefined; }
+      case 'join':      return Array.isArray(cur) ? cur.join(op.arg||',') : undefined;
+      case 'toNumber':  return typeof cur==='string' ? Number(cur) : undefined;
+      case 'toString':  return typeof cur==='number' ? String(cur) : undefined;
+      default:          return op.to;
+    }
+  }
+
+  // Replay a recorded edit's ops onto fresh data. Returns a new object + how many
+  // ops actually applied (some may not match the current shape — that's fine).
+  function applyOps(ops, data) {
+    const out=JSON.parse(JSON.stringify(data));
+    let applied=0;
+    for (const op of ops) {
+      try {
+        if (op.type==='rename') {
+          const parent=pathGet(out, op.parent);
+          if (parent && typeof parent==='object' && (op.from in parent)) { parent[op.to]=parent[op.from]; delete parent[op.from]; applied++; }
+        } else if (op.type==='remove') {
+          const parent=pathGet(out, op.path.slice(0,-1)), key=op.path[op.path.length-1];
+          if (Array.isArray(parent)) { if (key<parent.length) { parent.splice(key,1); applied++; } }
+          else if (parent && typeof parent==='object' && (key in parent)) { delete parent[key]; applied++; }
+        } else if (op.type==='add') { setPath(out, op.path, op.value); applied++; }
+        else if (op.type==='replace') { if (pathExists(out, op.path)) { setPath(out, op.path, op.to); applied++; } }
+        else if (op.type==='transform') {
+          if (pathExists(out, op.path)) { const nv=applyTransform(op, pathGet(out, op.path)); if (nv!==undefined) { setPath(out, op.path, nv); applied++; } }
+        }
+      } catch {}
+    }
+    return { data:out, applied };
+  }
+
+  // How well a recorded edit fits the current data: fraction of its non-add ops
+  // whose target path exists. Adds are always applicable, so they don't count.
+  function opsApplicable(ops, data) {
+    let total=0, ok=0;
+    for (const op of ops) {
+      if (op.type==='add') continue;
+      total++;
+      if (op.type==='rename') { const p=pathGet(data, op.parent); if (p && typeof p==='object' && (op.from in p)) ok++; }
+      else if (pathExists(data, op.path)) ok++;
+    }
+    return total===0 ? 1 : ok/total;
+  }
+
+  function recordEditFromModal(ns, url, method, originalRaw, editedRaw) {
+    let before, after;
+    try { before=JSON.parse(originalRaw); after=JSON.parse(editedRaw); } catch { return; } // JSON-only
+    const ops=classifyOps(diffJson(before, after));
+    if (!ops.length) return;
+    const entry={ id:'e'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), ts:Date.now(), ns, url, method, ops, summary:ops.map(o=>o.display).join(', ') };
+    state.editMemory.unshift(entry);
+    if (state.editMemory.length>EDIT_MEM_MAX) state.editMemory.length=EDIT_MEM_MAX;
+    saveEditMemory(state.editMemory);
+    renderEditMemoryList();
+  }
+
+  // Normalized endpoint identity: host + pathname, ignoring the query string and
+  // hash (query params vary per call; the endpoint is what makes two requests
+  // "the same API"). Relative URLs are resolved against the current page.
+  function endpointKey(url) {
+    try { const u=new URL(url, location.href); return u.host + u.pathname; }
+    catch { return String(url||'').split('?')[0].split('#')[0]; }
+  }
+
+  // ── Suggestion chips inside the intercept modals ──────────────────────────────
+  function renderEditSuggestions(ns) {
+    const cont=$(ns==='req'?'dt-req-edit-suggest':'dt-res-edit-suggest');
+    if (!cont) return;
+    const edId=ns==='req'?'dt-req-ed':'dt-res-ed';
+    let data; try { data=JSON.parse($(edId).value); } catch { cont.style.display='none'; cont.innerHTML=''; return; }
+    // Only suggest edits recorded on THIS same endpoint and same direction
+    // (a request-body edit never makes sense on a response, and vice-versa).
+    const curUrl = ns==='req' ? (state.currentReq && state.currentReq.url) : (state.currentRes && state.currentRes.url);
+    const curKey = endpointKey(curUrl);
+    const matches=[];
+    for (const e of state.editMemory) {
+      if (e.ns !== ns || endpointKey(e.url) !== curKey) continue;
+      if (opsApplicable(e.ops, data) >= 0.5) matches.push(e);
+      if (matches.length>=4) break;
+    }
+    if (!matches.length) { cont.style.display='none'; cont.innerHTML=''; return; }
+    cont.style.display='';
+    cont.innerHTML=`<div class="dt-es-label">Apply a recent edit</div>` +
+      matches.map(m=>`<button class="dt-es-chip" data-es-id="${m.id}" title="${escHtml(m.summary)}"><span class="dt-es-chip-txt">${escHtml(truncate(m.summary,64))}</span><span class="dt-es-apply">Apply</span></button>`).join('');
+    cont.querySelectorAll('.dt-es-chip').forEach(btn=>btn.addEventListener('click',()=>applyEditToEditor(ns, btn.dataset.esId)));
+  }
+  function applyEditToEditor(ns, id) {
+    const entry=state.editMemory.find(e=>e.id===id); if (!entry) return;
+    const edId=ns==='req'?'dt-req-ed':'dt-res-ed', sk=ns==='req'?'reqSearch':'resSearch';
+    let data; try { data=JSON.parse($(edId).value); } catch { return; }
+    const { data:out, applied }=applyOps(entry.ops, data);
+    $(edId).value=JSON.stringify(out, null, 2);
+    updateBadge(edId);
+    renderHL(edId, sk, state[sk].term||'');
+    showInterceptToast(applied ? `Applied ${applied} change${applied!==1?'s':''}` : 'No matching fields to change', applied>0);
+    renderEditSuggestions(ns);
+  }
+
+  // ── Management list (Network panel) ───────────────────────────────────────────
+  function memTimeAgo(ts) { const s=Math.max(0,Math.round((Date.now()-ts)/1000)); if (s<60) return s+'s ago'; const m=Math.round(s/60); if (m<60) return m+'m ago'; const h=Math.round(m/60); if (h<24) return h+'h ago'; return Math.round(h/24)+'d ago'; }
+  function renderEditMemoryList() {
+    const list=$('dt-edit-mem-list'); if (!list) return;
+    const clearBtn=$('dt-edit-mem-clear'), countEl=$('dt-edit-mem-count');
+    if (countEl) countEl.textContent=state.editMemory.length ? String(state.editMemory.length) : '';
+    if (!state.editMemory.length) {
+      list.innerHTML=`<div class="dt-edit-mem-empty">No edits recorded yet. Edit a request or response body in the intercept modal and click Send — the change is detected and saved here.</div>`;
+      if (clearBtn) clearBtn.style.display='none';
+      return;
+    }
+    if (clearBtn) clearBtn.style.display='';
+    list.innerHTML=state.editMemory.map(e=>{
+      let path=e.url; try { path=new URL(e.url, location.href).pathname; } catch {}
+      return `<div class="dt-edit-mem-item">
+        <div class="dt-edit-mem-main">
+          <div class="dt-edit-mem-sum">${escHtml(truncate(e.summary,90))}</div>
+          <div class="dt-edit-mem-meta"><span class="dt-edit-mem-ns dt-edit-mem-ns-${e.ns}">${e.ns==='req'?'REQ':'RES'}</span> ${escHtml(e.method)} <span class="dt-edit-mem-path">${escHtml(truncate(path,42))}</span> · ${memTimeAgo(e.ts)}</div>
+        </div>
+        <button class="dt-edit-mem-del" data-mem-del="${e.id}" title="Delete this entry">${icon('x',12,2.2)}</button>
+      </div>`;
+    }).join('');
+    list.querySelectorAll('[data-mem-del]').forEach(b=>b.addEventListener('click',()=>deleteEditMemory(b.dataset.memDel)));
+  }
+  function deleteEditMemory(id) { state.editMemory=state.editMemory.filter(e=>e.id!==id); saveEditMemory(state.editMemory); renderEditMemoryList(); }
+  function clearEditMemory() { state.editMemory=[]; saveEditMemory(state.editMemory); renderEditMemoryList(); }
 
   function removeFromQueue(key,item) { const i=state[key].indexOf(item);if(i!==-1)state[key].splice(i,1);updateQueueUI(key==='pendingReqs'?'req':'res'); }
   // Escapes quotes too — escHtml output is routinely interpolated into HTML
@@ -2016,13 +2285,12 @@
   // (key held down) or by pressing-and-holding the Network panel's Hold button.
   let _holdState = null; // { prevReq, prevRes, comboParts:[] } while active
   function beginHold(comboParts) {
-    if (_holdState) return; // already holding (keydown auto-repeat, or button)
+    if (_holdState) return; // already holding (keydown auto-repeat)
     _holdState = { prevReq: state.req.enabled, prevRes: state.res.enabled, comboParts: comboParts || [] };
     state.req.enabled = true;
     state.res.enabled = true;
     syncNetworkPanel(); // NOTE: no Store.set — the hold must never persist
     showInterceptToast('Hold intercept · Request + Response', true);
-    const btn = $('dt-hold-intercept'); if (btn) btn.classList.add('holding');
   }
   function endHold() {
     if (!_holdState) return;
@@ -2031,7 +2299,6 @@
     _holdState = null;
     syncNetworkPanel();
     showInterceptToast('Hold released', false);
-    const btn = $('dt-hold-intercept'); if (btn) btn.classList.remove('holding');
   }
   // Normalized name of the key released in a keyup (modifiers included), so we
   // can tell when any part of the held chord has been let go.
@@ -2411,6 +2678,9 @@
       }
     }
   }
+  // Put the flash-guard in place immediately (document-start), before boot() has
+  // even finished waiting for the @require'd CSS/HTML on a cold cache.
+  injectCriticalHide();
   boot();
 
 })();
