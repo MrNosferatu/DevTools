@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Form Autofill Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.4.1
+// @version      3.5.2
 // @description  Form Autofill plugin for DevTools Sidebar — detect forms on the page, configure per-field fill values (fixed text, dynamic tokens, or defaults for selects/radios/checkboxes), with URL-param conditions, and fill them automatically on load.
 // @author       MrNosferatu
 // ==/UserScript==
 
 // Registers a factory rather than running immediately — see Devtools_plugins.js.
 DT_registerPlugin(function createFormFillPlugin(ctx) {
-  const { Store, state, $, escHtml } = ctx;
+  const { Store, state, $, $1, root, escHtml } = ctx;
 
   // Input types that can never be meaningfully autofilled from the panel.
   const SKIP_TYPES = ['hidden', 'submit', 'button', 'reset', 'image', 'file'];
@@ -396,7 +396,7 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     });
     $('dt-ff-refresh').addEventListener('click', renderDetected);
     // Re-detect whenever the user opens this panel — pages mutate constantly.
-    const navBtn = document.querySelector('.dt-nav-btn[data-panel="formfill"]');
+    const navBtn = $1('.dt-nav-btn[data-panel="formfill"]');
     if (navBtn) navBtn.addEventListener('click', renderDetected);
     renderDetected();
     renderSaved();
@@ -512,7 +512,7 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
           <button class="dt-foot-btn dt-foot-btn-send" id="dt-ff-modal-done"><span>Done</span></button>
         </div>
       </div>`;
-    document.documentElement.appendChild(overlayEl);
+    root().appendChild(overlayEl);
     overlayEl.addEventListener('click', e => { if (e.target === overlayEl) closeModal(); });
     overlayEl.querySelector('#dt-ff-modal-close').addEventListener('click', closeModal);
     overlayEl.querySelector('#dt-ff-modal-done').addEventListener('click', closeModal);

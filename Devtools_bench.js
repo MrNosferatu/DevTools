@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Bench Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.4.1
+// @version      3.5.2
 // @description  Bench plugin for DevTools Sidebar — manual or captured request benchmarking with concurrency, warmup, and a results sparkline.
 // @author       MrNosferatu
 // ==/UserScript==
 
 // Registers a factory rather than running immediately — see Devtools_plugins.js.
 DT_registerPlugin(function createBenchPlugin(ctx) {
-  const { Store, state, $, escHtml, ALL_METHODS, METHOD_COLORS, getFetch } = ctx;
+  const { Store, state, $, $$, escHtml, ALL_METHODS, METHOD_COLORS, getFetch } = ctx;
 
   // ─── Bench panel HTML ──────────────────────────────────────────────────────────
   function buildBenchPanel() {
@@ -256,8 +256,8 @@ DT_registerPlugin(function createBenchPlugin(ctx) {
     });
 
     // Capture filter: URL mode
-    document.querySelectorAll('.dt-mode-btn[data-ns="bench-cap"]').forEach(btn => btn.addEventListener('click', () => {
-      document.querySelectorAll('.dt-mode-btn[data-ns="bench-cap"]').forEach(b => b.classList.remove('active'));
+    $$('.dt-mode-btn[data-ns="bench-cap"]').forEach(btn => btn.addEventListener('click', () => {
+      $$('.dt-mode-btn[data-ns="bench-cap"]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.bench.mode = btn.dataset.mode;
       Store.set('bench.mode', state.bench.mode);
@@ -300,7 +300,7 @@ DT_registerPlugin(function createBenchPlugin(ctx) {
 
     // Restore bench capture filter mode UI
     if (state.bench.mode === 'manual') {
-      document.querySelectorAll('.dt-mode-btn[data-ns="bench-cap"]').forEach(b => b.classList.toggle('active', b.dataset.mode === 'manual'));
+      $$('.dt-mode-btn[data-ns="bench-cap"]').forEach(b => b.classList.toggle('active', b.dataset.mode === 'manual'));
       const rw = $('dt-bench-cap-rwrap'); if(rw) rw.classList.add('visible');
       const ri = $('dt-bench-cap-regex'); if(ri && state.bench.urlRegex) ri.value = state.bench.urlRegex;
     }
