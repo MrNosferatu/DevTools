@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Base URL Switcher Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.0.0
+// @version      3.4.1
 // @description  Base URL Switcher plugin for DevTools Sidebar — a floating button for swapping between configured environments (prod/staging/...) on matching pages.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -19,7 +19,7 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
   function buildBaseUrlPanel() {
     return `
       <div class="dt-section">
-        <div class="dt-slabel">Base URL Switcher</div>
+        <div class="dt-slabel">Environment Switcher</div>
         <div class="dt-row" style="margin-bottom:10px">
           <div class="dt-row-label" style="display:flex;align-items:center;gap:5px">Enable globally</div>
           <label class="dt-toggle"><input type="checkbox" id="dt-baseurl-enabled"><div class="dt-toggle-track"><div class="dt-toggle-thumb"></div></div></label>
@@ -393,7 +393,8 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
 
   return {
     id: 'baseUrl',
-    navLabel: 'Base URL',
+    navLabel: 'Environments',
+    navIcon: 'swap',
     buildPanel: buildBaseUrlPanel,
     initPanel: initBaseUrlPanel,
     getDefaultState,

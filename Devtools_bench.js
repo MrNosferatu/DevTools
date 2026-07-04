@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Bench Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.0.0
+// @version      3.4.1
 // @description  Bench plugin for DevTools Sidebar — manual or captured request benchmarking with concurrency, warmup, and a results sparkline.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -768,6 +768,7 @@ DT_registerPlugin(function createBenchPlugin(ctx) {
   return {
     id: 'bench',
     navLabel: 'Bench',
+    navIcon: 'gauge',
     buildPanel: buildBenchPanel,
     initPanel: bindBench,
     wantsCapture: shouldBenchCapture,

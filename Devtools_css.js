@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.0.0
+// @version      3.4.1
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -45,7 +45,7 @@ const CSS = `
     --bg:#ffffff; --sf:#f5f6f8; --sf2:#eceef2;
     --bd:#e3e5ea; --bd2:#c5c9d2;
     --tx:#14161c; --tx2:#3d4250; --mu:#646b7d; --fa:#9aa0af;
-    --ac:#3b6ef5; --ac-bg:#eef3ff; --ac-bd:#c2d3fc;
+    --ac:#3b6ef5; --ac-bg:#eef3ff; --ac-bd:#c2d3fc; --ac-tx:#ffffff;
     --gn:#12915a; --gn-bg:#e9faf1; --gn-bd:#b3ecce;
     --rd:#d63535; --rd-bg:#fdecec; --rd-bd:#f6c9c9;
     --am:#c47a06; --am-bg:#fef6e6; --am-bd:#f6dca3;
@@ -65,7 +65,7 @@ const CSS = `
     --bg:#16171b; --sf:#1f2127; --sf2:#292c34;
     --bd:#33363f; --bd2:#484c58;
     --tx:#eceef6; --tx2:#c3c7d6; --mu:#9599ab; --fa:#71768a;
-    --ac:#6a9bff; --ac-bg:#1b2846; --ac-bd:#37538f;
+    --ac:#6a9bff; --ac-bg:#1b2846; --ac-bd:#37538f; --ac-tx:#ffffff;
     --gn:#54c98a; --gn-bg:#16311f; --gn-bd:#2f5f3c;
     --rd:#ff6b64; --rd-bg:#3a1d1d; --rd-bd:#6a3232;
     --am:#f0bd4e; --am-bg:#33280f; --am-bd:#63501d;
@@ -77,8 +77,8 @@ const CSS = `
   }
 
   /* Pull tab */
-  #dt-tab { position:fixed; top:50%; right:0; transform:translateY(-50%); z-index:999991; width:28px; height:96px; background:var(--bg); border:1px solid var(--bd); border-right:none; border-radius:10px 0 0 10px; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:-2px 0 10px rgba(0,0,0,.07); transition:width .18s var(--ease),background .15s,border-color .15s; overflow:hidden; user-select:none; }
-  #dt-tab.dt-tab-animate { transition:width .18s var(--ease),background .15s,border-color .15s,left .28s cubic-bezier(.4,0,.2,1),right .28s cubic-bezier(.4,0,.2,1); }
+  #dt-tab { position:fixed; top:50%; right:0; transform:translateY(-50%); z-index:999991; width:28px; height:96px; background:var(--bg); border:1px solid var(--bd); border-right:none; border-radius:10px 0 0 10px; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:-2px 0 10px rgba(0,0,0,.07); will-change:transform; transition:width .18s var(--ease),background .15s,border-color .15s; overflow:hidden; user-select:none; }
+  #dt-tab.dt-tab-animate { transition:width .18s var(--ease),background .15s,border-color .15s,transform .28s cubic-bezier(.4,0,.2,1); }
   #dt-tab:hover { width:34px; background:var(--sf); border-color:var(--bd2); }
   #dt-tab.active { border-color:var(--ac-bd); background:var(--ac-bg); }
   #dt-tab-inner { display:flex; flex-direction:column; align-items:center; gap:7px; pointer-events:none; }
@@ -88,7 +88,7 @@ const CSS = `
   #dt-tab.active #dt-tab-chevron { transform:scaleX(-1); color:var(--ac); }
 
   /* Sidebar */
-  #dt-sidebar { position:fixed; top:0; right:0; bottom:0; z-index:999990; width:var(--dt-w,360px); transform:translateX(var(--dt-w,360px)); background:var(--bg); display:flex; flex-direction:column; box-shadow:-4px 0 24px rgba(0,0,0,.10),-1px 0 0 var(--bd); overflow:hidden; }
+  #dt-sidebar { position:fixed; top:0; right:0; bottom:0; z-index:999990; width:var(--dt-w,360px); will-change:transform; transform:translateX(var(--dt-w,360px)); background:var(--bg); display:flex; flex-direction:column; box-shadow:-4px 0 24px rgba(0,0,0,.10),-1px 0 0 var(--bd); overflow:hidden; }
   #dt-sidebar.open { transform:translateX(0); }
 
   /* Drag resize handle */
@@ -98,7 +98,7 @@ const CSS = `
   /* Side toggle (Left/Right) */
   .dt-side-toggle { display:flex; border:1.5px solid var(--bd); border-radius:7px; overflow:hidden; flex-shrink:0; }
   .dt-side-btn { padding:5px 12px; font-size:11px; font-weight:500; background:transparent; border:none; color:var(--mu); cursor:pointer; transition:all .15s; }
-  .dt-side-btn.active { background:var(--ac); color:#fff; }
+  .dt-side-btn.active { background:var(--ac); color:var(--ac-tx,#fff); }
   .dt-head { padding:18px 18px 14px; border-bottom:1px solid var(--bd); flex-shrink:0; display:flex; align-items:center; gap:11px; }
   .dt-head-icon { width:32px; height:32px; background:var(--ac-bg); border:1px solid var(--ac-bd); border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:15px; }
   .dt-head-text { flex:1; }
@@ -111,7 +111,9 @@ const CSS = `
   .dt-head-settings.active { background:var(--ac-bg); border-color:var(--ac-bd); color:var(--ac); }
   .dt-nav { display:flex; border-bottom:1px solid var(--bd); background:var(--sf); flex-shrink:0; padding:0 14px; overflow-x:auto; scrollbar-width:none; -ms-overflow-style:none; }
   .dt-nav::-webkit-scrollbar { display:none; }
-  .dt-nav-btn { padding:10px 10px 9px; font-size:12px; font-weight:500; color:var(--mu); cursor:pointer; background:none; border:none; border-bottom:2px solid transparent; margin-bottom:-1px; transition:color .15s,border-color .15s; flex-shrink:0; white-space:nowrap; }
+  .dt-nav-btn { display:inline-flex; align-items:center; gap:5px; padding:10px 9px 9px; font-size:12px; font-weight:500; color:var(--mu); cursor:pointer; background:none; border:none; border-bottom:2px solid transparent; margin-bottom:-1px; transition:color .15s,border-color .15s; flex-shrink:0; white-space:nowrap; }
+  .dt-nav-btn .dt-ico { flex-shrink:0; opacity:.65; transition:opacity .15s; }
+  .dt-nav-btn:hover .dt-ico, .dt-nav-btn.active .dt-ico { opacity:1; }
   .dt-nav-btn:hover { color:var(--tx2); }
   .dt-nav-btn.active { color:var(--ac); border-bottom-color:var(--ac); }
   .dt-scroll { flex:1; overflow-y:auto; }
@@ -185,8 +187,6 @@ const CSS = `
   .dt-regex-dot { width:6px; height:6px; border-radius:50%; background:var(--bd); flex-shrink:0; transition:background .15s; }
   .dt-regex-dot.valid { background:var(--gn); }
   .dt-regex-dot.invalid { background:var(--rd); }
-  .dt-persist-note { font-size:11px; color:var(--mu); padding:9px 11px; background:var(--sf); border:1px solid var(--bd); border-radius:7px; margin-top:10px; line-height:1.55; }
-  .dt-persist-note.on { background:var(--ac-bg); border-color:var(--ac-bd); color:var(--ac); }
   .dt-about-hero { padding:24px 18px 18px; border-bottom:1px solid var(--bd); text-align:center; }
   .dt-about-icon { width:48px; height:48px; background:var(--ac-bg); border:1px solid var(--ac-bd); border-radius:13px; display:flex; align-items:center; justify-content:center; font-size:22px; margin:0 auto 10px; }
   .dt-about-title { font-size:16px; font-weight:600; color:var(--tx); margin-bottom:3px; }
@@ -199,7 +199,6 @@ const CSS = `
   .dt-feature-desc { font-size:11px; color:var(--mu); line-height:1.55; }
 
   /* ── Sidebar Settings Panel ─────────────────────────────────────────────── */
-  .dt-settings-group-label { font-family:'IBM Plex Mono',monospace; font-size:9px; font-weight:500; letter-spacing:.14em; text-transform:uppercase; color:var(--mu); margin-bottom:10px; }
   /* Theme swatches */
   .dt-theme-grid { display:flex; flex-wrap:wrap; gap:7px; }
   .dt-theme-swatch { cursor:pointer; border-radius:8px; overflow:hidden; border:2px solid transparent; transition:all .15s; flex-shrink:0; }
@@ -218,10 +217,8 @@ const CSS = `
   .dt-font-opt-name { font-size:12px; color:var(--tx); flex:1; }
   .dt-font-opt-preview { font-size:10px; color:var(--mu); }
   /* Font size slider */
-  .dt-size-row { display:flex; align-items:center; gap:12px; }
   .dt-size-slider { flex:1; appearance:none; height:4px; border-radius:2px; background:var(--sf2); outline:none; cursor:pointer; }
-  .dt-size-slider::-webkit-slider-thumb { appearance:none; width:16px; height:16px; border-radius:50%; background:var(--ac); cursor:pointer; box-shadow:0 1px 4px rgba(37,99,235,.3); }
-  .dt-size-val { font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--tx2); min-width:28px; text-align:right; }
+  .dt-size-slider::-webkit-slider-thumb { appearance:none; width:16px; height:16px; border-radius:50%; background:var(--ac); cursor:pointer; box-shadow:0 1px 4px var(--ring); }
   /* Custom colors */
   .dt-custom-colors { display:flex; flex-direction:column; gap:10px; }
   .dt-color-group { flex:1; }
@@ -233,12 +230,7 @@ const CSS = `
   .dt-color-clear { font-size:10px; color:var(--mu); background:transparent; border:1px solid var(--bd); border-radius:5px; padding:4px 7px; cursor:pointer; transition:all .15s; }
   .dt-color-clear:hover { border-color:var(--rd-bd); color:var(--rd); }
   /* Preview box */
-  .dt-ed-preview { border-radius:8px; overflow:hidden; margin-top:4px; }
-  .dt-ed-preview-inner { padding:12px 14px; font-size:12px; line-height:1.7; white-space:pre; }
   /* Apply button */
-  .dt-settings-apply-row { display:flex; justify-content:flex-end; gap:8px; padding-top:4px; }
-  .dt-btn-apply { font-size:12px; font-weight:500; padding:8px 16px; border-radius:7px; cursor:pointer; background:var(--ac); border:1px solid var(--ac); color:#fff; transition:all .15s; }
-  .dt-btn-apply:hover { background:#1d4ed8; }
   .dt-btn-reset { font-size:12px; font-weight:500; padding:8px 16px; border-radius:7px; cursor:pointer; background:transparent; border:1px solid var(--bd); color:var(--tx2); transition:all .15s; }
   .dt-btn-reset:hover { border-color:var(--bd2); }
 
@@ -368,7 +360,6 @@ const CSS = `
   .dt-tree-node { display:flex; align-items:center; gap:4px; padding:2px 4px; border-radius:4px; cursor:pointer; white-space:nowrap; transition:background .1s; }
   .dt-tree-node:hover { background:var(--sf2); }
   .dt-tree-node.selected { background:var(--ac-bg); color:var(--ac); }
-  .dt-tree-indent { display:inline-block; width:14px; flex-shrink:0; }
   .dt-tree-arrow { font-size:9px; color:var(--fa); flex-shrink:0; width:10px; }
   .dt-tree-key { color:var(--tx); font-weight:500; }
   .dt-tree-type { font-size:9px; color:var(--fa); margin-left:4px; }
@@ -403,8 +394,8 @@ const CSS = `
   .dt-foot-btn:hover { border-color:var(--bd2); color:var(--tx); }
   .dt-foot-btn-abort { background:var(--bg); border-color:var(--bd); color:var(--tx2); }
   .dt-foot-btn-abort:hover { border-color:var(--rd-bd); color:var(--rd); background:var(--rd-bg); }
-  .dt-foot-btn-send { background:var(--ac); border-color:var(--ac); color:#fff; }
-  .dt-foot-btn-send:hover { background:#1d4ed8; border-color:#1d4ed8; color:#fff; box-shadow:0 4px 12px rgba(37,99,235,.28); }
+  .dt-foot-btn-send { background:var(--ac); border-color:var(--ac); color:var(--ac-tx,#fff); }
+  .dt-foot-btn-send:hover { filter:brightness(.92); box-shadow:0 4px 12px var(--ring); }
   .dt-foot-btn-send.res-send { background:var(--vi); border-color:var(--vi); color:#fff; }
   .dt-foot-btn-send.res-send:hover { background:#6d28d9; border-color:#6d28d9; color:#fff; box-shadow:0 4px 12px rgba(124,58,237,.28); }
 
@@ -506,8 +497,8 @@ const CSS = `
   .dt-bench-num-input:focus { border-color:var(--ac); box-shadow:0 0 0 3px var(--ac-bg); }
 
   /* Run button */
-  .dt-bench-run-btn { display:flex; align-items:center; justify-content:center; gap:7px; width:100%; padding:10px; background:var(--ac); border:none; border-radius:8px; color:#fff; font-size:13px; font-weight:600; cursor:pointer; transition:all .15s; }
-  .dt-bench-run-btn:hover { background:#1d4ed8; box-shadow:0 4px 12px rgba(37,99,235,.28); }
+  .dt-bench-run-btn { display:flex; align-items:center; justify-content:center; gap:7px; width:100%; padding:10px; background:var(--ac); border:none; border-radius:8px; color:var(--ac-tx,#fff); font-size:13px; font-weight:600; cursor:pointer; transition:all .15s; }
+  .dt-bench-run-btn:hover { filter:brightness(.92); box-shadow:0 4px 12px var(--ring); }
   .dt-bench-run-btn:disabled { background:var(--fa); cursor:not-allowed; box-shadow:none; }
   .dt-bench-run-btn.running { background:var(--rd); }
   .dt-bench-run-btn.running:hover { background:#b91c1c; }
@@ -585,7 +576,6 @@ const CSS = `
   /* Base URL panel */
   .dt-baseurl-group { border:1.5px solid var(--bd); border-radius:9px; overflow:hidden; margin-bottom:10px; background:var(--bg); transition:border-color .15s; }
   .dt-baseurl-group-head { display:flex; align-items:center; gap:8px; padding:9px 12px; background:var(--sf); }
-  .dt-baseurl-group-color { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
   .dt-baseurl-group-label-input { font-size:12px; font-weight:600; color:var(--tx); flex:1; min-width:0; background:transparent; border:none; outline:none; }
   .dt-baseurl-group-label-input::placeholder { color:var(--fa); font-weight:400; }
   .dt-baseurl-group-body { padding:10px 12px; display:flex; flex-direction:column; gap:8px; border-top:1px solid var(--bd); }
@@ -605,8 +595,6 @@ const CSS = `
   .dt-baseurl-group-add-url:hover { background:#dbeafe; }
   .dt-baseurl-match-row { display:flex; align-items:center; gap:6px; }
   .dt-baseurl-match-label { font-size:11px; color:var(--mu); flex-shrink:0; }
-  .dt-baseurl-group-match { font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--tx); background:var(--sf); border:1px solid var(--bd); border-radius:5px; padding:5px 8px; outline:none; transition:border-color .15s; flex:1; min-width:0; }
-  .dt-baseurl-group-match:focus { border-color:var(--ac); }
   .dt-baseurl-color-strip { display:flex; gap:5px; padding:2px 0; }
   .dt-baseurl-entry .dt-baseurl-color-strip { position:absolute; top:26px; left:0; z-index:20; background:var(--bg); border:1px solid var(--bd); border-radius:8px; padding:6px 8px; box-shadow:0 4px 16px rgba(0,0,0,.16); }
   .dt-baseurl-color-dot { width:16px; height:16px; border-radius:50%; cursor:pointer; border:2px solid transparent; transition:all .15s; flex-shrink:0; }
@@ -618,7 +606,7 @@ const CSS = `
      FAB along the sidebar's inner edge when open (right = width + 24), so it stays
      visible and usable instead of being hidden — hence the right/left transition. */
   #dt-baseurl-fab { position:fixed; bottom:24px; right:24px; z-index:999988; display:flex; flex-direction:column; align-items:flex-end; gap:6px; transition:right .28s var(--ease), left .28s var(--ease); }
-  .dt-baseurl-fab-btn { display:flex; align-items:center; gap:7px; padding:9px 14px; background:var(--ac); color:#fff; border:none; border-radius:30px; cursor:pointer; font-size:12px; font-weight:600; box-shadow:0 4px 16px var(--ring); transition:transform .16s var(--ease), box-shadow .18s, filter .15s; white-space:nowrap; font-family:'IBM Plex Sans',sans-serif; }
+  .dt-baseurl-fab-btn { display:flex; align-items:center; gap:7px; padding:9px 14px; background:var(--ac); color:var(--ac-tx,#fff); border:none; border-radius:30px; cursor:pointer; font-size:12px; font-weight:600; box-shadow:0 4px 16px var(--ring); transition:transform .16s var(--ease), box-shadow .18s, filter .15s; white-space:nowrap; font-family:'IBM Plex Sans',sans-serif; }
   .dt-baseurl-fab-btn:hover { filter:brightness(1.08); box-shadow:0 6px 22px var(--ring); transform:translateY(-1px); }
   .dt-baseurl-fab-btn:active { transform:translateY(0) scale(.97); }
   .dt-baseurl-fab-btn svg { transition:transform .25s var(--ease); }
@@ -770,7 +758,6 @@ const CSS = `
   /* ── Nav ───────────────────────────────────────────────────────────────── */
   .dt-nav { padding:0 12px; gap:2px; }
   .dt-nav-btn { font-size:12.5px; font-weight:500; padding:11px 10px 10px; border-bottom:2.5px solid transparent; }
-  .dt-nav-btn.active { color:var(--ac); border-bottom-color:var(--ac); }
 
   /* ── Sections with request/response accent rails ───────────────────────── */
   .dt-section { padding:16px 18px; position:relative; }
@@ -854,7 +841,7 @@ const CSS = `
   .dt-dark .dt-path-btn-extract:hover, .dt-dark .dt-baseurl-group-add-url:hover { background:var(--ac-bd); }
   .dt-dark .dt-path-btn-wrap:hover { background:var(--gn-bd); }
   .dt-dark .dt-transform-run-btn:hover { background:var(--vi-bd); }
-  .dt-dark .dt-btn-apply:hover, .dt-dark .dt-bench-run-btn:hover { filter:brightness(1.12); background:var(--ac); }
+  .dt-dark .dt-bench-run-btn:hover { filter:brightness(1.12); background:var(--ac); }
 
   /* ── Keyboard shortcuts settings ─────────────────────────────────────────── */
   .dt-kb-list { display:flex; flex-direction:column; gap:10px; }
@@ -894,6 +881,62 @@ const CSS = `
   .dt-edit-mem-del:hover { background:var(--rd-bg); color:var(--rd); }
   .dt-edit-mem-clear { display:flex; align-items:center; justify-content:center; gap:6px; width:100%; margin-top:8px; padding:7px; border:1px solid var(--bd); border-radius:7px; background:transparent; color:var(--rd); font-size:11px; font-weight:500; cursor:pointer; transition:all .15s; }
   .dt-edit-mem-clear:hover { background:var(--rd-bg); border-color:var(--rd-bd); }
+
+  /* ── Intercept queue navigation (request modal foot) ─────────────────────── */
+  .dt-qnav { flex:0 0 auto; width:24px; height:24px; display:flex; align-items:center; justify-content:center; border:1px solid var(--bd); background:var(--sf); color:var(--tx2); border-radius:6px; cursor:pointer; padding:0; transition:all .15s; }
+  .dt-qnav:hover { border-color:var(--ac-bd); color:var(--ac); background:var(--ac-bg); }
+
+  /* ── Sidebar palette picker ───────────────────────────────────────────────── */
+  .dt-sb-palette-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(66px,1fr)); gap:6px; }
+  .dt-sb-palette { display:flex; flex-direction:column; align-items:center; gap:4px; padding:5px 4px; background:var(--sf); border:1.5px solid var(--bd); border-radius:8px; cursor:pointer; transition:all .15s; }
+  .dt-sb-palette:hover { border-color:var(--ac-bd); }
+  .dt-sb-palette.active { border-color:var(--ac); background:var(--ac-bg); }
+  .dt-sb-palette-chip { display:flex; width:100%; height:22px; border-radius:5px; overflow:hidden; border:1px solid var(--bd); }
+  .dt-sb-palette-half { flex:1; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; font-family:'IBM Plex Mono',monospace; }
+  .dt-sb-palette-name { font-size:9.5px; color:var(--tx2); max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  /* ── Form Autofill plugin ─────────────────────────────────────────────────── */
+  .dt-ff-empty { font-size:11px; color:var(--mu); padding:14px 0; text-align:center; font-style:italic; }
+  .dt-ff-item { display:flex; align-items:center; gap:8px; padding:8px 10px; margin-bottom:5px; background:var(--sf); border:1.5px solid var(--bd); border-radius:7px; cursor:pointer; transition:all .15s; }
+  .dt-ff-item:hover { border-color:var(--ac-bd); background:var(--ac-bg); }
+  .dt-ff-item.selected { border-color:var(--ac); background:var(--ac-bg); }
+  .dt-ff-item-main { flex:1; min-width:0; }
+  .dt-ff-item-name { font-size:12px; font-weight:600; color:var(--tx); font-family:'IBM Plex Mono',monospace; word-break:break-all; }
+  .dt-ff-item-meta { font-size:10.5px; color:var(--mu); margin-top:2px; }
+  .dt-ff-item-cta { flex-shrink:0; font-size:10px; font-weight:600; color:var(--ac); }
+  .dt-ff-hint { font-size:10px; color:var(--mu); line-height:1.5; font-family:'IBM Plex Mono',monospace; word-break:break-word; }
+  .dt-ff-field { border:1px solid var(--bd); border-radius:7px; background:var(--sf); padding:7px 9px; margin-bottom:6px; }
+  .dt-ff-field-head { display:flex; align-items:center; gap:8px; }
+  .dt-ff-field-name { flex:1; min-width:0; font-size:11.5px; font-weight:500; color:var(--tx); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dt-ff-badge { flex-shrink:0; font-size:9px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; padding:1px 5px; border-radius:4px; color:var(--tx2); background:var(--sf2); border:1px solid var(--bd); font-family:'IBM Plex Mono',monospace; }
+  .dt-ff-field-body { margin-top:7px; display:flex; flex-direction:column; gap:5px; }
+  .dt-ff-val-row { display:flex; align-items:center; gap:6px; }
+  .dt-ff-val-wrap { flex:1; min-width:0; display:flex; }
+  .dt-ff-input, .dt-ff-select { flex:1; min-width:0; width:100%; padding:5px 8px; border:1.5px solid var(--bd); border-radius:6px; background:var(--sf); color:var(--tx); font-size:11px; font-family:'IBM Plex Mono',monospace; outline:none; transition:border-color .15s; box-sizing:border-box; }
+  .dt-ff-input:focus, .dt-ff-select:focus { border-color:var(--ac); box-shadow:0 0 0 3px var(--ac-bg); }
+  .dt-ff-select { cursor:pointer; }
+  .dt-ff-cond-row { display:flex; align-items:center; gap:4px; }
+  .dt-ff-cond-row .dt-ff-cond-param { flex:1; }
+  .dt-ff-cond-row .dt-ff-cond-match { flex:1; }
+  .dt-ff-cond-txt { flex-shrink:0; font-size:10px; color:var(--mu); font-family:'IBM Plex Mono',monospace; }
+  .dt-ff-add-cond { align-self:flex-start; border:none; background:transparent; color:var(--ac); font-size:10.5px; font-weight:500; cursor:pointer; padding:2px 0; }
+  .dt-ff-add-cond:hover { text-decoration:underline; }
+  .dt-ff-cond-del { flex-shrink:0; width:20px; height:20px; display:flex; align-items:center; justify-content:center; border:none; background:transparent; color:var(--mu); border-radius:5px; cursor:pointer; transition:all .15s; }
+  .dt-ff-cond-del:hover { background:var(--rd-bg); color:var(--rd); }
+  /* Show/hide: the core's overlay visibility rules are ID-scoped to the four
+     static overlays, so this runtime-created one needs its own — without them
+     it stays painted (but click-through) after .visible is removed. */
+  #dt-ff-overlay { visibility:hidden; opacity:0; pointer-events:none; transition:opacity .18s ease; }
+  #dt-ff-overlay.visible { visibility:visible; opacity:1; pointer-events:all; }
+  #dt-ff-modal { width:640px; height:auto; min-height:340px; max-height:92vh; }
+  .dt-ff-modal-toggles { display:flex; gap:24px; margin-bottom:10px; padding:9px 12px; background:var(--sf); border:1px solid var(--bd); border-radius:8px; }
+  .dt-ff-modal-toggles .dt-row { flex:1; margin:0; }
+  .dt-ff-modal-close { flex-shrink:0; width:28px; height:28px; display:flex; align-items:center; justify-content:center; border:none; background:transparent; color:var(--mu); border-radius:7px; cursor:pointer; transition:all .15s; }
+  .dt-ff-modal-close:hover { background:var(--sf2); color:var(--tx); }
+  .dt-ff-foot-neutral { background:transparent; border-color:var(--bd); color:var(--tx2); flex:0 0 auto; padding-left:16px; padding-right:16px; }
+  .dt-ff-foot-neutral:hover { border-color:var(--ac-bd); color:var(--ac); background:var(--ac-bg); }
+  #dt-ff-overlay .dt-modal-count { flex:1; text-align:left; color:var(--mu); }
+  #dt-ff-overlay .dt-foot-btn-send { flex:0 0 auto; padding-left:18px; padding-right:18px; }
 
   /* ── Hotkey toast ─────────────────────────────────────────────────────────── */
   #dt-hotkey-toast { position:fixed; z-index:2147483646; bottom:24px; left:50%; transform:translateX(-50%) translateY(10px); display:flex; align-items:center; gap:9px; padding:10px 16px; border-radius:10px; background:rgba(22,23,27,.94); color:#f4f5fa; font-family:'IBM Plex Sans',system-ui,sans-serif; font-size:13px; font-weight:500; letter-spacing:.01em; box-shadow:0 8px 30px rgba(0,0,0,.35); backdrop-filter:blur(6px); opacity:0; pointer-events:none; transition:opacity .18s var(--ease,ease),transform .18s var(--ease,ease); }

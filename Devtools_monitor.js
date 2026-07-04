@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Network Monitor Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.0.0
+// @version      3.4.1
 // @description  Network Monitor plugin for DevTools Sidebar — a simple persistent network log with regex/search filtering and literal cURL export.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -298,6 +298,7 @@ DT_registerPlugin(function createMonitorPlugin(ctx) {
   return {
     id: 'monitor',
     navLabel: 'Monitor',
+    navIcon: 'activity',
     buildPanel: buildMonitorPanel,
     initPanel: initMonitorPanel,
     wantsCapture: shouldMonitor,

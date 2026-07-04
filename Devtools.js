@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.0.0
+// @version      3.4.2
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -96,6 +96,8 @@
       side:       Store.get('layout.side', 'right'),
       width:      Store.get('layout.width', 360),
       appearance: Store.get('layout.appearance', 'light'), // 'light'|'dark'|'auto'|'custom'
+      sbTheme:    Store.get('layout.sbTheme', 'default'),   // sidebar color palette key
+      _customBase: Store.get('layout.customBase', 'light'), // which variant custom overrides sit on
       customBg:   Store.get('layout.customBg', ''),
       customSf:   Store.get('layout.customSf', ''),
       customTx:   Store.get('layout.customTx', ''),
@@ -161,6 +163,8 @@
     'layout.side':        () => { state.layout.side = Store.get('layout.side', 'right'); applyLayout(true); },
     'layout.width':       () => { state.layout.width = Store.get('layout.width', 360); applyLayout(true); },
     'layout.appearance':  () => { state.layout.appearance = Store.get('layout.appearance', 'light'); applySidebarTheme(); },
+    'layout.sbTheme':     () => { state.layout.sbTheme = Store.get('layout.sbTheme', 'default'); applySidebarTheme(); },
+    'layout.customBase':  () => { state.layout._customBase = Store.get('layout.customBase', 'light'); applySidebarTheme(); },
     'layout.customBg':    () => { state.layout.customBg = Store.get('layout.customBg', ''); applySidebarTheme(); },
     'layout.customSf':    () => { state.layout.customSf = Store.get('layout.customSf', ''); applySidebarTheme(); },
     'layout.customTx':    () => { state.layout.customTx = Store.get('layout.customTx', ''); applySidebarTheme(); },
@@ -239,7 +243,7 @@
     document.documentElement.appendChild(style);
     const wrap = document.createElement('div');
     const pluginNavHtml = plugins.map(p => p.navLabel
-      ? `<button class="dt-nav-btn" data-panel="${p.id}">${escHtml(p.navLabel)}</button>` : '').join('');
+      ? `<button class="dt-nav-btn" data-panel="${p.id}">${p.navIcon ? icon(p.navIcon, 13, 1.9) : ''}<span>${escHtml(p.navLabel)}</span></button>` : '').join('');
     const pluginPanelHtml = plugins.map(p => p.buildPanel
       ? `<div class="dt-panel" id="dt-panel-${p.id}">${p.buildPanel()}</div>` : '').join('');
     wrap.innerHTML = HTML
@@ -296,29 +300,70 @@
     `;
   }
 
-  const SB_THEMES = {
-    light: { bg:'#fff', sf:'#f7f7f7', sf2:'#efefef', bd:'#e2e2e2', bd2:'#cacaca', tx:'#111', tx2:'#444', mu:'#777', fa:'#bbb' },
-    dark:  { bg:'#1a1b1e', sf:'#222327', sf2:'#2a2b2f', bd:'#333540', bd2:'#4a4d5a', tx:'#e4e6f0', tx2:'#b0b3c6', mu:'#6b6f82', fa:'#454760' },
+  // Sidebar color palettes — like the editor themes, but each ships BOTH a
+  // light and a dark variant; the appearance mode (light/dark/auto/custom)
+  // decides which variant is active, so a palette always works in both modes.
+  const SB_PALETTES = {
+    default: { name:'Default',
+      light: { bg:'#fff', sf:'#f7f7f7', sf2:'#efefef', bd:'#e2e2e2', bd2:'#cacaca', tx:'#111', tx2:'#444', mu:'#777', fa:'#bbb', ac:'#3b6ef5' },
+      dark:  { bg:'#1a1b1e', sf:'#222327', sf2:'#2a2b2f', bd:'#333540', bd2:'#4a4d5a', tx:'#e4e6f0', tx2:'#b0b3c6', mu:'#6b6f82', fa:'#454760', ac:'#6a9bff' } },
+    catppuccin: { name:'Catppuccin',
+      light: { bg:'#eff1f5', sf:'#e6e9ef', sf2:'#dce0e8', bd:'#ccd0da', bd2:'#acb0be', tx:'#4c4f69', tx2:'#5c5f77', mu:'#8c8fa1', fa:'#bcc0cc', ac:'#1e66f5' },
+      dark:  { bg:'#1e1e2e', sf:'#181825', sf2:'#313244', bd:'#313244', bd2:'#45475a', tx:'#cdd6f4', tx2:'#bac2de', mu:'#6c7086', fa:'#45475a', ac:'#89b4fa' } },
+    nord: { name:'Nord',
+      light: { bg:'#eceff4', sf:'#e5e9f0', sf2:'#d8dee9', bd:'#d8dee9', bd2:'#aeb8cc', tx:'#2e3440', tx2:'#434c5e', mu:'#7b88a1', fa:'#c2cbdc', ac:'#5e81ac' },
+      dark:  { bg:'#2e3440', sf:'#3b4252', sf2:'#434c5e', bd:'#434c5e', bd2:'#4c566a', tx:'#eceff4', tx2:'#d8dee9', mu:'#7b88a1', fa:'#4c566a', ac:'#88c0d0' } },
+    dracula: { name:'Dracula',
+      light: { bg:'#f8f8f2', sf:'#efefe9', sf2:'#e5e5df', bd:'#dcdcd4', bd2:'#b8b8ae', tx:'#282a36', tx2:'#44475a', mu:'#90918b', fa:'#c9c9c1', ac:'#6f42c1' },
+      dark:  { bg:'#282a36', sf:'#21222c', sf2:'#343746', bd:'#44475a', bd2:'#6272a4', tx:'#f8f8f2', tx2:'#cfcfc5', mu:'#6272a4', fa:'#44475a', ac:'#bd93f9' } },
+    monokai: { name:'Monokai',
+      light: { bg:'#fafaf5', sf:'#f0f0e8', sf2:'#e6e6dc', bd:'#d9d9cc', bd2:'#b5b5a4', tx:'#272822', tx2:'#49483e', mu:'#8a8873', fa:'#cfcfc0', ac:'#c91f5f' },
+      dark:  { bg:'#272822', sf:'#1e1f1c', sf2:'#33342c', bd:'#3e3d32', bd2:'#57584a', tx:'#f8f8f2', tx2:'#d5d5cd', mu:'#75715e', fa:'#49483e', ac:'#f92672' } },
   };
+  function sbPalette() { return SB_PALETTES[state.layout.sbTheme] || SB_PALETTES.default; }
+
+  // Color helpers for palette-derived accent tints. --ac-bg/--ac-bd/--ring are
+  // blends of the accent with the palette background; --ac-tx is black or
+  // white, whichever contrasts against the SOLID accent (light accents like
+  // Nord's cyan or Catppuccin Mocha's blue need dark text, not white).
+  function hexToRgb(h) {
+    h = h.replace('#', '');
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const n = parseInt(h, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  function mixHex(a, b, t) {
+    const A = hexToRgb(a), B = hexToRgb(b);
+    return '#' + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, '0')).join('');
+  }
+  function hexLum(h) {
+    const [r, g, b] = hexToRgb(h).map(v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); });
+    return .2126 * r + .7152 * g + .0722 * b;
+  }
 
   function applySidebarTheme() {
-    const { appearance, customBg, customSf, customTx, customBd } = state.layout;
-    let tokens;
-    if (appearance === 'auto') {
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      tokens = prefersDark ? SB_THEMES.dark : SB_THEMES.light;
-    } else if (appearance === 'custom') {
-      // Base on the previously active resolved theme, not always dark
-      const prevIsDark = state.layout._customBase === 'dark';
-      tokens = { ...(prevIsDark ? SB_THEMES.dark : SB_THEMES.light) };
+    const { appearance, sbTheme, customBg, customSf, customTx, customBd } = state.layout;
+    // Resolve dark-ness first (custom keeps the base it was created from), then
+    // pick that variant of the active palette. Custom color overrides sit on top.
+    const isDark = appearance === 'dark'
+      || (appearance === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+      || (appearance === 'custom' && state.layout._customBase === 'dark');
+    const tokens = { ...(isDark ? sbPalette().dark : sbPalette().light) };
+    if (appearance === 'custom') {
       if (customBg) tokens.bg = customBg;
       if (customSf) { tokens.sf = customSf; tokens.sf2 = customSf; }
       if (customTx) { tokens.tx = customTx; tokens.tx2 = customTx; }
       if (customBd) { tokens.bd = customBd; tokens.bd2 = customBd; }
-    } else {
-      tokens = SB_THEMES[appearance] || SB_THEMES.light;
     }
-    const isDark = appearance === 'dark' || (appearance === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches) || appearance === 'custom';
+    // Non-default palettes and custom overrides need inline vars; the plain
+    // default palette is fully covered by the stylesheet (+ .dt-dark).
+    const useInlineVars = appearance === 'custom' || (sbTheme && sbTheme !== 'default');
+    const acDerived = tokens.ac ? {
+      bg:   mixHex(tokens.bg, tokens.ac, isDark ? 0.22 : 0.10),
+      bd:   mixHex(tokens.bg, tokens.ac, isDark ? 0.45 : 0.32),
+      tx:   hexLum(tokens.ac) > 0.36 ? '#14161c' : '#ffffff',
+      ring: `rgba(${hexToRgb(tokens.ac).join(',')},.3)`,
+    } : null;
 
     // All themed elements: sidebar, tab, and all modal overlays
     const themedEls = [
@@ -326,11 +371,17 @@
       $('dt-req-overlay'), $('dt-res-overlay'),
       $('dt-presets-overlay'), $('dt-save-preset-overlay'),
       $('dt-baseurl-fab'), // its dropdown menu uses --bg/--bd — was stuck light in dark mode
+      $('dt-ff-overlay'),  // Form Autofill config modal — created at runtime by its
+                           // plugin, so it must be themed live here too, not just
+                           // mirrored once when it opens.
     ].filter(Boolean);
 
     themedEls.forEach(el => {
-      el.classList.toggle('dt-dark', isDark && appearance !== 'custom');
-      if (appearance === 'custom') {
+      // dt-dark now follows the RESOLVED dark-ness, including in custom mode —
+      // previously custom always fell back to the light base class, which
+      // wiped the dark styling ("theme hidden when custom").
+      el.classList.toggle('dt-dark', isDark);
+      if (useInlineVars) {
         el.style.setProperty('--bg', tokens.bg);
         el.style.setProperty('--sf', tokens.sf);
         el.style.setProperty('--sf2', tokens.sf2);
@@ -339,15 +390,28 @@
         el.style.setProperty('--bd', tokens.bd);
         el.style.setProperty('--bd2', tokens.bd2);
         el.style.setProperty('--mu', tokens.mu);
+        if (tokens.fa) el.style.setProperty('--fa', tokens.fa);
+        if (acDerived) {
+          el.style.setProperty('--ac', tokens.ac);
+          el.style.setProperty('--ac-bg', acDerived.bg);
+          el.style.setProperty('--ac-bd', acDerived.bd);
+          el.style.setProperty('--ac-tx', acDerived.tx);
+          el.style.setProperty('--ring', acDerived.ring);
+        }
       } else {
-        ['--bg','--sf','--sf2','--tx','--tx2','--bd','--bd2','--mu'].forEach(v => el.style.removeProperty(v));
+        ['--bg','--sf','--sf2','--tx','--tx2','--bd','--bd2','--mu','--fa','--ac','--ac-bg','--ac-bd','--ac-tx','--ring'].forEach(v => el.style.removeProperty(v));
       }
     });
 
     // Sync appearance tab UI
     document.querySelectorAll('.dt-appearance-tab').forEach(b => b.classList.toggle('active', b.dataset.sbmode === appearance));
+    document.querySelectorAll('.dt-sb-palette').forEach(b => b.classList.toggle('active', b.dataset.sbtheme === (sbTheme || 'default')));
     const customPanel = $('dt-sb-custom-colors');
     if (customPanel) customPanel.style.display = appearance === 'custom' ? '' : 'none';
+    // The system-theme palettes only drive the light/dark/auto modes — in
+    // custom (manual) mode the user's own colors rule, so hide the picker.
+    const sysTheme = $('dt-sb-system-theme');
+    if (sysTheme) sysTheme.style.display = appearance === 'custom' ? 'none' : '';
   }
 
   // ─── Layout (side + width) ────────────────────────────────────────────────────
@@ -386,21 +450,19 @@
       // Tab chevron direction
       const chevron = $('dt-tab-chevron');
       if (chevron) chevron.style.transform = isLeft ? 'scaleX(-1)' : '';
-      // Tab offset when open — animate only during open/close toggle, not drag or side-switch
+      // Tab offset when open — animate only during open/close toggle, not drag
+      // or side-switch. The offset is a TRANSFORM (not left/right): the sidebar
+      // slides with a composited transform, so the tab must too, or the two run
+      // on different threads (compositor vs main-thread layout) and visibly
+      // drift apart whenever the host page is busy.
       if (animate) {
         tab.classList.add('dt-tab-animate');
         // Remove after transition completes so drag doesn't get the slow transition
         clearTimeout(tab._animTimeout);
         tab._animTimeout = setTimeout(() => tab.classList.remove('dt-tab-animate'), 350);
       }
-      // Clear both sides first so there's no lingering value on the inactive side
-      tab.style.left  = '';
-      tab.style.right = '';
-      if (state.sidebarOpen) {
-        tab.style[isLeft ? 'left' : 'right'] = width + 'px';
-      } else {
-        tab.style[isLeft ? 'left' : 'right'] = '0';
-      }
+      const off = state.sidebarOpen ? width : 0;
+      tab.style.transform = `translate(${isLeft ? off : -off}px, -50%)`;
     }
 
     // Drag handle side
@@ -430,7 +492,6 @@
     if (slider) { slider.value = width; const wv = $('dt-sb-width-val'); if (wv) wv.value = width; }
     document.querySelectorAll('.dt-side-btn').forEach(b => b.classList.toggle('active', b.dataset.side === side));
   }
-  let sbTemp = {};
 
   // Wires a show/hide eye-icon toggle for a CSS-masked (not type=password) input —
   // see the comment on .dt-rec-secret-input for why it's not a real password field.
@@ -610,11 +671,16 @@
           const isDark = prev === 'dark' || (prev === 'auto' && window.matchMedia('(prefers-color-scheme:dark)').matches);
           // Remember which base to use so applySidebarTheme picks the right defaults
           state.layout._customBase = isDark ? 'dark' : 'light';
-          const base = isDark ? SB_THEMES.dark : SB_THEMES.light;
-          if (!state.layout.customBg) state.layout.customBg = base.bg;
-          if (!state.layout.customSf) state.layout.customSf = base.sf;
-          if (!state.layout.customTx) state.layout.customTx = base.tx;
-          if (!state.layout.customBd) state.layout.customBd = base.bd;
+          Store.set('layout.customBase', state.layout._customBase);
+          // Never-configured custom mode starts as the style currently on
+          // screen (active palette + resolved light/dark). Persist the seeded
+          // values — previously they lived only in memory, so custom came back
+          // empty after a reload.
+          const base = isDark ? sbPalette().dark : sbPalette().light;
+          if (!state.layout.customBg) { state.layout.customBg = base.bg; Store.set('layout.customBg', base.bg); }
+          if (!state.layout.customSf) { state.layout.customSf = base.sf; Store.set('layout.customSf', base.sf); }
+          if (!state.layout.customTx) { state.layout.customTx = base.tx; Store.set('layout.customTx', base.tx); }
+          if (!state.layout.customBd) { state.layout.customBd = base.bd; Store.set('layout.customBd', base.bd); }
           syncSbCustomColorInputs();
         }
         Store.set('layout.appearance', state.layout.appearance);
@@ -641,104 +707,89 @@
     window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change',()=>{ if(state.layout.appearance==='auto') applySidebarTheme(); });
 
     // ── Editor theme grid ────────────────────────────────────────────────────────
-    buildThemeGrid('dt-sb-theme-grid', ()=>sbTemp.theme, k => {
-      sbTemp.theme = k;
+    // Editor settings commit immediately on change — same behavior as the
+    // appearance/layout controls; there is no staging + Apply step anymore.
+    function commitEditorSettings(patch) {
+      Object.assign(state.editorSettings, patch);
+      const KEYS = { theme:'ed.theme', font:'ed.font', fontSize:'ed.fontSize', customBg:'ed.customBg', customText:'ed.customText' };
+      Object.keys(patch).forEach(k => Store.set(KEYS[k], state.editorSettings[k]));
+      applyEditorTheme();
+      updateSbPreview();
+    }
+    buildThemeGrid('dt-sb-theme-grid', k => {
       const isCustom = k === 'custom';
       const eccDiv = $('dt-sb-editor-custom-colors');
       if(eccDiv) eccDiv.style.display = isCustom ? '' : 'none';
-      if(isCustom && !sbTemp.customBg) {
+      const patch = { theme: k };
+      if(isCustom && !state.editorSettings.customBg) {
         // Pre-fill custom colors from last non-custom theme
         const last = Object.keys(ED_THEMES).filter(x=>x!=='custom').slice(-1)[0];
         const base = ED_THEMES[last] || ED_THEMES.catppuccin;
-        sbTemp.customBg = base.bg; sbTemp.customText = base.text;
-        syncColorInputsToState('dt-sb-bg', sbTemp.customBg);
-        syncColorInputsToState('dt-sb-text', sbTemp.customText);
+        patch.customBg = base.bg; patch.customText = base.text;
+        syncColorInputsToState('dt-sb-bg', base.bg);
+        syncColorInputsToState('dt-sb-text', base.text);
       }
-      updateSbPreview();
+      commitEditorSettings(patch);
     });
 
     // ── Font list (styled per-font) ──────────────────────────────────────────────
-    buildFontList('dt-sb-font-list', ()=>sbTemp.font||state.editorSettings.font, fId => {
-      sbTemp.font = fId;
-      updateSbPreview();
-    });
+    buildFontList('dt-sb-font-list', fId => commitEditorSettings({ font: fId }));
 
     // ── Font size slider + stepper + input ───────────────────────────────────────
     function setSizeVal(v) {
       v = Math.max(9, Math.min(18, parseInt(v)||12));
-      sbTemp.fontSize = v;
       const sl=$('dt-sb-size-slider'), vi=$('dt-sb-size-val');
       if(sl) sl.value = v; if(vi) vi.value = v;
-      updateSbPreview();
+      commitEditorSettings({ fontSize: v });
     }
     const sSlider=$('dt-sb-size-slider'), sVal=$('dt-sb-size-val');
     if(sSlider){ sSlider.value=state.editorSettings.fontSize; sSlider.addEventListener('input',()=>setSizeVal(sSlider.value)); }
     if(sVal){ sVal.value=state.editorSettings.fontSize; sVal.addEventListener('change',()=>setSizeVal(sVal.value)); }
     const sdDec = $('dt-sb-size-dec'), sdInc = $('dt-sb-size-inc');
-    if(sdDec) sdDec.addEventListener('click',()=>setSizeVal((sbTemp.fontSize||state.editorSettings.fontSize)-1));
-    if(sdInc) sdInc.addEventListener('click',()=>setSizeVal((sbTemp.fontSize||state.editorSettings.fontSize)+1));
+    if(sdDec) sdDec.addEventListener('click',()=>setSizeVal(state.editorSettings.fontSize-1));
+    if(sdInc) sdInc.addEventListener('click',()=>setSizeVal(state.editorSettings.fontSize+1));
 
     // ── Editor custom colors ─────────────────────────────────────────────────────
-    bindColorInputs('dt-sb-bg',   'customBg',   ()=>updateSbPreview());
-    bindColorInputs('dt-sb-text', 'customText', ()=>updateSbPreview());
+    bindColorInputs('dt-sb-bg',   v => commitEditorSettings({ customBg: v }));
+    bindColorInputs('dt-sb-text', v => commitEditorSettings({ customText: v }));
     syncColorInputsToState('dt-sb-bg',   state.editorSettings.customBg);
     syncColorInputsToState('dt-sb-text', state.editorSettings.customText);
 
     // Show/hide custom editor colors based on current theme selection
     const eccDiv = $('dt-sb-editor-custom-colors');
-    if(eccDiv) eccDiv.style.display = (sbTemp.theme||state.editorSettings.theme) === 'custom' ? '' : 'none';
+    if(eccDiv) eccDiv.style.display = state.editorSettings.theme === 'custom' ? '' : 'none';
 
-    // ── Apply / Reset ────────────────────────────────────────────────────────────
-    const applyBtn = $('dt-sb-settings-apply');
-    if(applyBtn) applyBtn.addEventListener('click', () => {
-      Object.assign(state.editorSettings, sbTemp);
-      Store.set('ed.theme', state.editorSettings.theme);
-      Store.set('ed.font',  state.editorSettings.font);
-      Store.set('ed.fontSize', state.editorSettings.fontSize);
-      Store.set('ed.customBg', state.editorSettings.customBg);
-      Store.set('ed.customText', state.editorSettings.customText);
-      applyEditorTheme();
-      const btn=$('dt-sb-settings-apply'), orig=btn.textContent;
-      btn.textContent='Saved ✓'; btn.style.background='var(--gn)'; btn.style.borderColor='var(--gn)'; btn.style.color='#fff';
-      setTimeout(()=>{btn.textContent=orig;btn.style.background='';btn.style.borderColor='';btn.style.color='';},1800);
-    });
+    // ── Reset (settings apply instantly on change; the Apply button is gone) ────
     const resetBtn = $('dt-sb-settings-reset');
     if(resetBtn) resetBtn.addEventListener('click', () => {
-      const defaults = { theme:'catppuccin', font:'ibm', fontSize:12, customBg:'', customText:'' };
-      sbTemp = { ...defaults };
-      syncSbControlsToTemp();
-      updateSbPreview();
+      commitEditorSettings({ theme:'catppuccin', font:'ibm', fontSize:12, customBg:'', customText:'' });
+      syncEditorSettingControls();
     });
 
-    sbTemp = { ...state.editorSettings };
+    buildSbPaletteGrid();
     updateSbPreview();
   }
 
-  function syncSbControlsToTemp() {
-    document.querySelectorAll('.dt-theme-swatch').forEach(s => s.classList.toggle('active', s.dataset.theme === sbTemp.theme));
-    // Sync font list
-    const targetFont = sbTemp.font || state.editorSettings.font;
-    document.querySelectorAll('#dt-sb-font-list .dt-font-opt').forEach(o => o.classList.toggle('active', o.dataset.font === targetFont));
-    const fs = sbTemp.fontSize || state.editorSettings.fontSize;
+  function syncEditorSettingControls() {
+    const es = state.editorSettings;
+    document.querySelectorAll('.dt-theme-swatch').forEach(s => s.classList.toggle('active', s.dataset.theme === es.theme));
+    document.querySelectorAll('#dt-sb-font-list .dt-font-opt').forEach(o => o.classList.toggle('active', o.dataset.font === es.font));
     const sl=$('dt-sb-size-slider'), vi=$('dt-sb-size-val');
-    if(sl) sl.value=fs; if(vi) vi.value=fs;
-    syncColorInputsToState('dt-sb-bg', sbTemp.customBg||'');
-    syncColorInputsToState('dt-sb-text', sbTemp.customText||'');
+    if(sl) sl.value=es.fontSize; if(vi) vi.value=es.fontSize;
+    syncColorInputsToState('dt-sb-bg', es.customBg||'');
+    syncColorInputsToState('dt-sb-text', es.customText||'');
+    const eccDiv = $('dt-sb-editor-custom-colors');
+    if(eccDiv) eccDiv.style.display = es.theme === 'custom' ? '' : 'none';
   }
 
   function updateSbPreview() {
-    const themeKey = sbTemp.theme || state.editorSettings.theme;
-    const t   = ED_THEMES[themeKey] || ED_THEMES.catppuccin;
+    const es = state.editorSettings;
+    const t   = ED_THEMES[es.theme] || ED_THEMES.catppuccin;
     // For a named theme, always use its bg/text. For custom, overlay the custom values.
-    const bg  = (themeKey === 'custom' && sbTemp.customBg)   ? sbTemp.customBg
-              : (themeKey === 'custom' && state.editorSettings.customBg) ? state.editorSettings.customBg
-              : t.bg;
-    const txt = (themeKey === 'custom' && sbTemp.customText) ? sbTemp.customText
-              : (themeKey === 'custom' && state.editorSettings.customText) ? state.editorSettings.customText
-              : t.text;
-    const fId = sbTemp.font || state.editorSettings.font;
-    const f   = (ED_FONTS.find(x => x.id === fId) || ED_FONTS[0]).css;
-    const fs  = sbTemp.fontSize !== undefined ? sbTemp.fontSize : state.editorSettings.fontSize;
+    const bg  = (es.theme === 'custom' && es.customBg)   ? es.customBg   : t.bg;
+    const txt = (es.theme === 'custom' && es.customText) ? es.customText : t.text;
+    const f   = (ED_FONTS.find(x => x.id === es.font) || ED_FONTS[0]).css;
+    const fs  = es.fontSize;
     // Apply to both the outer wrap (overrides the applyEditorTheme stylesheet) and inner text
     const wrap = $('dt-sb-preview');
     const inn  = $('dt-sb-preview-inner');
@@ -757,7 +808,7 @@
   }
 
   // ─── Reusable: build theme grid & font list ───────────────────────────────────
-  function buildThemeGrid(containerId, getCurrent, onChange) {
+  function buildThemeGrid(containerId, onChange) {
     const grid = $(containerId); if (!grid) return;
     grid.innerHTML = '';
     const allThemes = { ...ED_THEMES, custom: { name:'Custom', bg:'#1e1e2e', text:'#cdd6f4', bdr:'#313145' } };
@@ -775,7 +826,31 @@
     });
   }
 
-  function buildFontList(containerId, getCurrent, onChange) {
+  // Sidebar palette picker — a chip per palette showing its light/dark halves.
+  function buildSbPaletteGrid() {
+    const grid = $('dt-sb-palette-grid'); if (!grid) return;
+    grid.innerHTML = '';
+    Object.entries(SB_PALETTES).forEach(([key, pal]) => {
+      const el = document.createElement('button');
+      el.className = 'dt-sb-palette' + ((state.layout.sbTheme || 'default') === key ? ' active' : '');
+      el.dataset.sbtheme = key;
+      el.title = `${pal.name} — adapts to light & dark mode`;
+      el.innerHTML = `
+        <span class="dt-sb-palette-chip">
+          <span class="dt-sb-palette-half" style="background:${pal.light.bg};color:${pal.light.tx};border-right:1px solid ${pal.light.bd}">A</span>
+          <span class="dt-sb-palette-half" style="background:${pal.dark.bg};color:${pal.dark.tx}">a</span>
+        </span>
+        <span class="dt-sb-palette-name">${pal.name}</span>`;
+      el.addEventListener('click', () => {
+        state.layout.sbTheme = key;
+        Store.set('layout.sbTheme', key);
+        applySidebarTheme();
+      });
+      grid.appendChild(el);
+    });
+  }
+
+  function buildFontList(containerId, onChange) {
     const list = $(containerId); if (!list) return;
     list.innerHTML = '';
     ED_FONTS.forEach(f => {
@@ -793,14 +868,14 @@
   }
 
   // ─── Reusable: bind color picker + hex input + clear ─────────────────────────
-  function bindColorInputs(prefix, stateKey, onchange) {
+  function bindColorInputs(prefix, onchange) {
     const picker = $(`${prefix}-picker`), hexEl = $(`${prefix}-hex`), clearBtn = $(`${prefix}-clear`);
-    picker.addEventListener('input', () => { hexEl.value = picker.value; sbTemp[stateKey] = picker.value; onchange(); });
+    picker.addEventListener('input', () => { hexEl.value = picker.value; onchange(picker.value); });
     hexEl.addEventListener('input', () => {
       const v = hexEl.value.trim();
-      if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v)) { picker.value = v; sbTemp[stateKey] = v; onchange(); }
+      if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v)) { picker.value = v; onchange(v); }
     });
-    clearBtn.addEventListener('click', () => { hexEl.value = ''; picker.value = '#000000'; sbTemp[stateKey] = ''; onchange(); });
+    clearBtn.addEventListener('click', () => { hexEl.value = ''; picker.value = '#000000'; onchange(''); });
   }
 
   function syncColorInputsToState(prefix, value) {
@@ -890,9 +965,10 @@
       // any DOM lookups or classList/contains checks.
       if (!state.sidebarOpen) return;
       const sb=$('dt-sidebar'), tab=$('dt-tab');
-      const rqo=$('dt-req-overlay'), rso=$('dt-res-overlay'), pso=$('dt-presets-overlay'), spo=$('dt-save-preset-overlay');
-      // Only close sidebar on outside click if no modal is open
-      const anyModalOpen = (rqo&&rqo.classList.contains('visible'))||(rso&&rso.classList.contains('visible'))||(pso&&pso.classList.contains('visible'))||(spo&&spo.classList.contains('visible'));
+      // Only close sidebar on outside click if no modal is open — matched by
+      // class so plugin-created overlays (e.g. Form Autofill's config modal,
+      // which isn't part of the static HTML template) count too.
+      const anyModalOpen = !!document.querySelector('.dt-overlay.visible');
       if (!anyModalOpen && sb && !sb.contains(e.target) && !tab.contains(e.target) && !e.target.closest('#dt-rec-kebab-portal')) closeSidebar();
     }, true);
 
@@ -901,7 +977,9 @@
       document.querySelectorAll('.dt-nav-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.dt-panel').forEach(p => p.classList.remove('active'));
       const btn = document.querySelector(`.dt-nav-btn[data-panel="${panelName}"]`);
-      if (btn) btn.classList.add('active');
+      // The nav scrolls horizontally (6+ tabs overflow narrow sidebars) — keep
+      // the selected tab in view.
+      if (btn) { btn.classList.add('active'); btn.scrollIntoView && btn.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
       const panel = $('dt-panel-' + panelName);
       if (panel) panel.classList.add('active');
       const gearBtn = $('dt-settings-btn');
@@ -1301,6 +1379,7 @@
     if(!dot||!txt) return;
     dot.className=n>0?'dt-queue-dot active':'dt-queue-dot';
     txt.innerHTML=n>0?`<strong>${n}</strong> ${ns==='res'?'response':'request'}${n!==1?'s':''} waiting`:`No ${ns==='res'?'responses':'requests'} waiting`;
+    updateModalCounts();
   }
 
   // ─── Editor helpers ───────────────────────────────────────────────────────────
@@ -1815,6 +1894,45 @@
   }
 
   // ─── Request Modal ────────────────────────────────────────────────────────────
+  // ─── Modal coordinator ────────────────────────────────────────────────────────
+  // Request & response modals share one gate: an OPEN modal is never preempted.
+  // New intercepts only enqueue (badges/counters update); whenever a modal
+  // closes — or something arrives while idle — the next item is surfaced,
+  // responses first: a held response belongs to a request the user already
+  // approved and may be the only thing blocking the page on sequential sites,
+  // while for parallel bursts (Promise.all) the order is neutral anyway.
+  // FIFO within each type.
+  function anyInterceptModalOpen() {
+    const rq = $('dt-req-overlay'), rs = $('dt-res-overlay');
+    return !!((rq && rq.classList.contains('visible')) || (rs && rs.classList.contains('visible')));
+  }
+  function showNextModal() {
+    if (anyInterceptModalOpen()) return;
+    if (state.pendingRes.length > 0) showResModal(state.pendingRes[0]);
+    else if (state.pendingReqs.length > 0) showReqModal(state.pendingReqs[0]);
+  }
+  // Keeps "N of M · K waiting" counters and the queue-nav arrows live while a
+  // modal is open and the queues grow behind it.
+  function updateModalCounts() {
+    const rq = $('dt-req-overlay'), rs = $('dt-res-overlay');
+    if (rq && rq.classList.contains('visible') && state.currentReq) {
+      const i = state.pendingReqs.indexOf(state.currentReq);
+      const w = state.pendingRes.length;
+      const el = $('dt-req-count');
+      if (el && i !== -1) el.textContent = `${i + 1} of ${state.pendingReqs.length}${w ? ` · ${w} response${w === 1 ? '' : 's'} waiting` : ''}`;
+      const nav = state.pendingReqs.length > 1 ? '' : 'none';
+      const pb = $('dt-req-prev'), nb = $('dt-req-next');
+      if (pb) pb.style.display = nav;
+      if (nb) nb.style.display = nav;
+    }
+    if (rs && rs.classList.contains('visible') && state.currentRes) {
+      const i = state.pendingRes.indexOf(state.currentRes);
+      const w = state.pendingReqs.length;
+      const el = $('dt-res-count');
+      if (el && i !== -1) el.textContent = `${i + 1} of ${state.pendingRes.length}${w ? ` · ${w} request${w === 1 ? '' : 's'} waiting` : ''}`;
+    }
+  }
+
   function showReqModal(req) {
     const ov=$('dt-req-overlay');
     state.currentReq=req; // used by Edit Memory to scope suggestions to this endpoint
@@ -1833,11 +1951,12 @@
     try { body = JSON.stringify(JSON.parse(body), null, 2); } catch {}
     if(isGET){
       $('dt-req-editor-section').style.display='none';$('dt-req-params-section').style.display='flex';$('dt-req-params-list').innerHTML='';
-      try{const u=new URL(req.url.startsWith('http')?req.url:'https://x.com'+req.url);u.searchParams.forEach((v,k)=>addParamRow('dt-req-params-list',k,v));}catch{addParamRow('dt-req-params-list','','');}
+      const paramsUrl = req._draftUrl || req.url; // queue-nav parks edits as a draft
+      try{const u=new URL(paramsUrl.startsWith('http')?paramsUrl:'https://x.com'+paramsUrl);u.searchParams.forEach((v,k)=>addParamRow('dt-req-params-list',k,v));}catch{addParamRow('dt-req-params-list','','');}
       if (docSuggestions) renderParamSuggestions('dt-req-params-list', docSuggestions.query);
     }else{
       $('dt-req-editor-section').style.display='flex';$('dt-req-params-section').style.display='none';
-      $('dt-req-ed').value=body;updateBadge('dt-req-ed');renderHL('dt-req-ed','reqSearch','');
+      $('dt-req-ed').value=req._draftBody!=null?req._draftBody:body;updateBadge('dt-req-ed');renderHL('dt-req-ed','reqSearch','');
       renderBodySuggestions(docSuggestions ? docSuggestions.body : null);
       renderEditSuggestions('req');
     }
@@ -1845,18 +1964,37 @@
     const curlBtn = $('dt-req-copy-curl');
     if (curlBtn) curlBtn.style.display = isGET ? 'none' : '';
 
-    populateHeaders('dt-req-hinner','dt-req-hcount',req.headers,'dt-req-hrevert');
+    populateHeaders('dt-req-hinner','dt-req-hcount',req._draftHeaders||req.headers,'dt-req-hrevert');
     // Body revert
     const reqRevert=$('dt-req-ed-revert');
     if(reqRevert){reqRevert.onclick=()=>{$('dt-req-ed').value=body;updateBadge('dt-req-ed');renderHL('dt-req-ed','reqSearch','');};}
     // Header revert
     const reqHRevert=$('dt-req-hrevert');
     if(reqHRevert){reqHRevert.onclick=(e)=>{e.stopPropagation();populateHeaders('dt-req-hinner','dt-req-hcount',req.headers,'dt-req-hrevert');};}
-    $('dt-req-count').textContent=`${state.pendingReqs.indexOf(req)+1} of ${state.pendingReqs.length}`;
+    // Prev/next queue navigation — parallel bursts (Promise.all) have no
+    // meaningful order, so let the user pick which request to handle first.
+    // Current edits are parked on the request object and restored on return.
+    const bindNav = (id, dir) => {
+      const btn = $(id);
+      if (!btn) return;
+      const clone = btn.cloneNode(true);
+      btn.replaceWith(clone);
+      clone.addEventListener('click', () => {
+        const list = state.pendingReqs;
+        if (list.length < 2) return;
+        if (isGET) req._draftUrl = buildEditedUrl(req.url, 'dt-req-params-list');
+        else req._draftBody = $('dt-req-ed').value;
+        req._draftHeaders = collectHeaders('dt-req-hinner');
+        showReqModal(list[(list.indexOf(req) + dir + list.length) % list.length]);
+      });
+    };
+    bindNav('dt-req-prev', -1);
+    bindNav('dt-req-next', 1);
     ov.classList.add('visible');
+    updateModalCounts(); // counter/nav need the visible flag set
     bindModalActions('dt-req-send','dt-req-abort',
-      () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);const editedHeaders=collectHeaders('dt-req-hinner');if(isGET)req.resolve({editedUrl:buildEditedUrl(req.url,'dt-req-params-list'),editedHeaders});else{recordEditFromModal('req',req.url,req.method,req.body,$('dt-req-ed').value);req.resolve({editedBody:$('dt-req-ed').value,editedHeaders});}if(state.pendingReqs.length>0)showReqModal(state.pendingReqs[0]); },
-      () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);req.reject(new DOMException('Aborted by DevTools','AbortError'));if(state.pendingReqs.length>0)showReqModal(state.pendingReqs[0]); }
+      () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);const editedHeaders=collectHeaders('dt-req-hinner');if(isGET)req.resolve({editedUrl:buildEditedUrl(req.url,'dt-req-params-list'),editedHeaders});else{recordEditFromModal('req',req.url,req.method,req.body,$('dt-req-ed').value);req.resolve({editedBody:$('dt-req-ed').value,editedHeaders});}showNextModal(); },
+      () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);req.reject(new DOMException('Aborted by DevTools','AbortError'));showNextModal(); }
     );
     // Skip — pass original through unmodified
     const skipBtn = $('dt-req-skip');
@@ -1868,7 +2006,7 @@
         removeFromQueue('pendingReqs', req);
         if (isGET) req.resolve({ editedUrl: req.url, editedHeaders: req.headers });
         else req.resolve({ editedBody: req.body, editedHeaders: req.headers });
-        if (state.pendingReqs.length > 0) showReqModal(state.pendingReqs[0]);
+        showNextModal();
       });
     }
     // Skip All — disable intercept and pass through everything
@@ -1891,6 +2029,7 @@
         syncNetworkPanel();
         ov.classList.remove('visible');
         updateQueueUI('req');
+        showNextModal(); // surface any responses held while this queue drained
       });
     }
 
@@ -1925,12 +2064,13 @@
     // Header revert
     const resHRevert=$('dt-res-hrevert');
     if(resHRevert){resHRevert.onclick=(e)=>{e.stopPropagation();populateHeaders('dt-res-hinner','dt-res-hcount',res.headers,'dt-res-hrevert');};}
-    $('dt-res-count').textContent=`${state.pendingRes.indexOf(res)+1} of ${state.pendingRes.length}`;
+    // counter text handled by updateModalCounts() once the overlay is visible
     updateTransformPreview();
     ov.classList.add('visible');
+    updateModalCounts();
     bindModalActions('dt-res-send','dt-res-abort',
-      () => { ov.classList.remove('visible');removeFromQueue('pendingRes',res);recordEditFromModal('res',res.url,res.method,res.body,$('dt-res-ed').value);res.resolve($('dt-res-ed').value);if(state.pendingRes.length>0)showResModal(state.pendingRes[0]); },
-      () => { ov.classList.remove('visible');removeFromQueue('pendingRes',res);res.resolve(res.body);if(state.pendingRes.length>0)showResModal(state.pendingRes[0]); }
+      () => { ov.classList.remove('visible');removeFromQueue('pendingRes',res);recordEditFromModal('res',res.url,res.method,res.body,$('dt-res-ed').value);res.resolve($('dt-res-ed').value);showNextModal(); },
+      () => { ov.classList.remove('visible');removeFromQueue('pendingRes',res);res.resolve(res.body);showNextModal(); }
     );
   }
 
@@ -2350,7 +2490,7 @@
     _toastTimer = setTimeout(() => _toastEl.classList.remove('show'), 1600);
   }
 
-  function queueReq(url,method,headers,body){return new Promise((resolve,reject)=>{const req={url,method,headers,body,resolve,reject};state.pendingReqs.push(req);updateQueueUI('req');if(state.pendingReqs.length===1)showReqModal(req);});}
+  function queueReq(url,method,headers,body){return new Promise((resolve,reject)=>{const req={url,method,headers,body,resolve,reject};state.pendingReqs.push(req);updateQueueUI('req');showNextModal();});}
   function tryAutoTransform(url, body) {
     if (!state.res.autoTransform) return null;
     const active = state.resPresets.filter(p => p.enabled !== false);
@@ -2376,7 +2516,7 @@
   function queueRes(url,method,status,statusText,headers,body){
     const auto = tryAutoTransform(url, body);
     if (auto !== null) return Promise.resolve(auto);
-    return new Promise(resolve=>{const res={url,method,status,statusText,headers,body,resolve};state.pendingRes.push(res);updateQueueUI('res');if(state.pendingRes.length===1)showResModal(res);});
+    return new Promise(resolve=>{const res={url,method,status,statusText,headers,body,resolve};state.pendingRes.push(res);updateQueueUI('res');showNextModal();});
   }
 
   // ─── Patch fetch (robust with re-patching) ────────────────────────────────────

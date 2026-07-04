@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — API Recorder Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.0.0
+// @version      3.4.1
 // @description  API Recorder plugin for DevTools Sidebar — passively documents endpoint shapes and exports/pushes them as a Postman collection.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -1018,7 +1018,8 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
 
   return {
     id: 'recorder',
-    navLabel: 'API Docs',
+    navLabel: 'API Documentation',
+    navIcon: 'book',
     buildPanel: buildRecorderPanel,
     initPanel: initRecorderPanel,
     // Generic network-capture hook (see Devtools.js's fetch/XHR patches): core

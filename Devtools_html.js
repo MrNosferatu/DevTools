@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — HTML
 // @namespace    http://tampermonkey.net/
-// @version      3.0.0
+// @version      3.4.1
 // @description  HTML template builders for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -35,6 +35,8 @@ const DT_ICON_PATHS = {
   palette:     '<circle cx="12" cy="12" r="9"/><circle cx="8" cy="9.5" r="1"/><circle cx="15.5" cy="9" r="1"/><circle cx="16" cy="14" r="1"/><path d="M12 21a3 3 0 0 1 0-6 2 2 0 0 0 0-4 9 9 0 0 0 0 10z"/>',
   clock:       '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>',
   trash:       '<polyline points="3 6 5 6 21 6"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
+  activity:    '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+  checkSquare: '<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
 };
 function icon(name, size = 14, sw = 1.8) {
   return `<svg class="dt-ico" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${DT_ICON_PATHS[name] || ''}</svg>`;
@@ -220,7 +222,11 @@ function buildSidebarSettingsPanel() {
         <button class="dt-appearance-tab" data-sbmode="auto">Auto</button>
         <button class="dt-appearance-tab" data-sbmode="custom">Custom</button>
       </div>
-      <div id="dt-sb-custom-colors" style="display:none">
+      <div id="dt-sb-system-theme">
+        <div class="dt-flabel" style="margin:12px 0 6px">System Theme</div>
+        <div class="dt-sb-palette-grid" id="dt-sb-palette-grid"></div>
+      </div>
+      <div id="dt-sb-custom-colors" style="display:none;margin-top:12px">
         <div class="dt-custom-colors">
           <div class="dt-color-group"><div class="dt-color-label">Background</div><div class="dt-color-input-row"><input type="color" class="dt-color-picker" id="dt-sb-sbg-picker"><input type="text" class="dt-color-hex" id="dt-sb-sbg-hex" placeholder="#1a1b1e" maxlength="9"><button class="dt-color-clear" id="dt-sb-sbg-clear">${icon('x',11,2.4)}</button></div></div>
           <div class="dt-color-group"><div class="dt-color-label">Surface</div><div class="dt-color-input-row"><input type="color" class="dt-color-picker" id="dt-sb-ssf-picker"><input type="text" class="dt-color-hex" id="dt-sb-ssf-hex" placeholder="#222327" maxlength="9"><button class="dt-color-clear" id="dt-sb-ssf-clear">${icon('x',11,2.4)}</button></div></div>
@@ -261,9 +267,9 @@ function buildSidebarSettingsPanel() {
       </div>
     </div>
 
-    <div class="dt-section" style="display:flex;gap:8px">
-      <button class="dt-btn-reset" id="dt-sb-settings-reset">Reset</button>
-      <button class="dt-btn-apply" id="dt-sb-settings-apply">Apply</button>
+    <div class="dt-section">
+      <div class="dt-row-sub" style="color:var(--mu);font-size:11px;margin-bottom:8px">Changes apply immediately.</div>
+      <button class="dt-btn-reset" id="dt-sb-settings-reset" style="width:100%">Reset editor settings</button>
     </div>
   `;
 }
@@ -324,7 +330,7 @@ const HTML = `
       <button class="dt-head-close" id="dt-close-btn" title="Close">${icon('x',15,2.2)}</button>
     </div>
     <div class="dt-nav">
-      <button class="dt-nav-btn active" data-panel="network">Network</button>
+      <button class="dt-nav-btn active" data-panel="network">${icon('network',13,1.9)}<span>Network</span></button>
       <!--dt-nav-plugins-->
     </div>
     <div class="dt-scroll">
@@ -391,7 +397,9 @@ const HTML = `
         <button class="dt-foot-btn dt-foot-btn-abort" id="dt-req-abort">Abort</button>
         <button class="dt-foot-btn dt-foot-btn-skip" id="dt-req-skip" title="Pass through this request unmodified">Skip</button>
         <button class="dt-foot-btn dt-foot-btn-skip-all" id="dt-req-skip-all" title="Disable intercept and pass through all future requests">Skip All</button>
+        <button class="dt-qnav" id="dt-req-prev" title="Previous queued request" style="display:none">${icon('chevronLeft',13,2.2)}</button>
         <span class="dt-modal-count" id="dt-req-count"></span>
+        <button class="dt-qnav" id="dt-req-next" title="Next queued request" style="display:none">${icon('chevronRight',13,2.2)}</button>
         <button class="dt-foot-btn dt-foot-btn-send" id="dt-req-send"><span>Send Request</span>${icon('arrowRight',14,2)}</button>
       </div>
     </div>
