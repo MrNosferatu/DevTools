@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — HTML
 // @namespace    http://tampermonkey.net/
-// @version      3.4.1
+// @version      3.5.2
 // @description  HTML template builders for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -411,11 +411,11 @@ const HTML = `
       <div class="dt-modal-head">
         <div class="dt-modal-icon res">${icon('reply',18,1.9)}</div>
         <div class="dt-modal-meta"><div class="dt-modal-title">Response Intercepted</div><div class="dt-modal-url" id="dt-res-url"></div></div>
+        <div class="dt-res-status-pill" id="dt-res-status"></div>
         <div class="dt-method-tag GET" id="dt-res-method">GET</div>
       </div>
       <div class="dt-modal-body" id="dt-res-body">
         <div class="dt-modal-inner">
-          <div id="dt-res-status-bar"></div>
           <div class="dt-res-tabs">
             <button class="dt-res-tab active" data-restab="manual"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="vertical-align:middle;margin-right:4px"><path d="M2 3h8M2 6h5M2 9h6"/></svg>Manual Edit</button>
             <button class="dt-res-tab" data-restab="gui"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" style="vertical-align:middle;margin-right:4px"><rect x="1" y="1" width="4" height="4" rx="0.5"/><rect x="7" y="1" width="4" height="4" rx="0.5"/><rect x="1" y="7" width="4" height="4" rx="0.5"/><rect x="7" y="7" width="4" height="4" rx="0.5"/></svg>GUI Extract</button>

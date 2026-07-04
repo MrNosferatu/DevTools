@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Base URL Switcher Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.4.1
+// @version      3.5.2
 // @description  Base URL Switcher plugin for DevTools Sidebar — a floating button for swapping between configured environments (prod/staging/...) on matching pages.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -13,7 +13,7 @@
 // any plugin factory runs — a plugin can't hand a function to ctx in time for
 // other plugins in the same registration pass to use it.
 DT_registerPlugin(function createBaseUrlPlugin(ctx) {
-  const { Store, state, $, escHtml, BASEURL_COLORS, getGroupHosts } = ctx;
+  const { Store, state, $, $$, escHtml, BASEURL_COLORS, getGroupHosts } = ctx;
 
   // ─── Base URL Switcher panel HTML ─────────────────────────────────────────────
   function buildBaseUrlPanel() {
@@ -169,7 +169,7 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
   }
 
   function renderBaseUrlHosts(gi) {
-    const cont = document.getElementById(`dt-bug-hosts-${gi}`);
+    const cont = $(`dt-bug-hosts-${gi}`);
     if (!cont) return;
     const hosts = getGroupHosts(state.baseUrl.groups[gi]);
     cont.innerHTML = '';
@@ -213,7 +213,7 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
       colorSwatch.addEventListener('click', evt => {
         evt.stopPropagation();
         const open = colorStrip.style.display !== 'none';
-        document.querySelectorAll('.dt-baseurl-color-strip').forEach(s => s.style.display = 'none');
+        $$('.dt-baseurl-color-strip').forEach(s => s.style.display = 'none');
         colorStrip.style.display = open ? 'none' : 'flex';
       });
       colorStrip.querySelectorAll('.dt-baseurl-color-dot').forEach(dot => {
@@ -249,7 +249,7 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
     if (!renderBaseUrlEntries._closerBound) {
       renderBaseUrlEntries._closerBound = true;
       document.addEventListener('click', () => {
-        document.querySelectorAll('.dt-baseurl-entry .dt-baseurl-color-strip').forEach(s => s.style.display = 'none');
+        $$('.dt-baseurl-entry .dt-baseurl-color-strip').forEach(s => s.style.display = 'none');
       });
     }
   }

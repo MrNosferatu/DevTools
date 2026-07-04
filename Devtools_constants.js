@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Constants
 // @namespace    http://tampermonkey.net/
-// @version      3.4.1
+// @version      3.5.2
 // @description  Shared constants for DevTools Sidebar. Must be loaded first via @require.
 // @author       MrNosferatu
 // ==/UserScript==

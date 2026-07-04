@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.4.1
+// @version      3.5.2
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -10,7 +10,19 @@
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@300;400;500&display=swap');
 
-  /* Style isolation: reset properties that site stylesheets commonly clobber */
+  /* Shadow-DOM host. The whole UI lives in a shadow root, so page CSS can't
+     reach it at all (not even with !important) — except INHERITED properties
+     (font, color, ...) which still cross the boundary. \`all:initial\` on the
+     host severs that last channel; the rules below then set our own baseline.
+     Custom properties are NOT affected by \`all\`, so --dt-w still inherits from
+     <html> (set by applyLayout). The host box itself takes no space — its
+     children are position:fixed. */
+  :host { all: initial; }
+  #dt-root { font-family: 'IBM Plex Sans', -apple-system, sans-serif; }
+
+  /* Style isolation: reset properties that site stylesheets commonly clobber.
+     Kept even under shadow DOM as a belt-and-suspenders baseline for our own
+     descendants (the shadow tree inherits nothing from the page now). */
   #dt-tab, #dt-sidebar, #dt-req-overlay, #dt-res-overlay,
   #dt-presets-overlay, #dt-save-preset-overlay,
   #dt-tab *, #dt-sidebar *, #dt-req-overlay *, #dt-res-overlay *,
@@ -49,7 +61,7 @@ const CSS = `
     --gn:#12915a; --gn-bg:#e9faf1; --gn-bd:#b3ecce;
     --rd:#d63535; --rd-bg:#fdecec; --rd-bd:#f6c9c9;
     --am:#c47a06; --am-bg:#fef6e6; --am-bd:#f6dca3;
-    --vi:#7a4be8; --vi-bg:#f3eefe; --vi-bd:#dcccf8;
+    --vi:#7a4be8; --vi-bg:#f3eefe; --vi-bd:#dcccf8; --vi-tx:#ffffff;
     --ring:rgba(59,110,245,.28);
     --shadow-sm:0 1px 2px rgba(20,22,28,.06);
     --shadow-md:0 6px 20px rgba(20,22,28,.10);
@@ -69,7 +81,7 @@ const CSS = `
     --gn:#54c98a; --gn-bg:#16311f; --gn-bd:#2f5f3c;
     --rd:#ff6b64; --rd-bg:#3a1d1d; --rd-bd:#6a3232;
     --am:#f0bd4e; --am-bg:#33280f; --am-bd:#63501d;
-    --vi:#b48cff; --vi-bg:#271d40; --vi-bd:#4d3a7a;
+    --vi:#b48cff; --vi-bg:#271d40; --vi-bd:#4d3a7a; --vi-tx:#14161c;
     --ring:rgba(106,155,255,.34);
     --shadow-sm:0 1px 2px rgba(0,0,0,.35);
     --shadow-md:0 6px 20px rgba(0,0,0,.45);
@@ -242,8 +254,8 @@ const CSS = `
      the sidebar above everything else in the stack (including the kebab menu)
      even with no modal in sight, no matter how high the kebab menu's own
      z-index was set. */
-  html:has(.dt-overlay.visible) #dt-sidebar { z-index:999995 !important; }
-  html:has(.dt-overlay.visible) #dt-tab { z-index:999995 !important; }
+  #dt-root:has(.dt-overlay.visible) #dt-sidebar { z-index:999995 !important; }
+  #dt-root:has(.dt-overlay.visible) #dt-tab { z-index:999995 !important; }
 
   /* Modal — resizable, fixed initial size */
   .dt-modal { position:relative; z-index:1; width:700px; height:620px; min-width:500px; min-height:400px; max-width:98vw; max-height:96vh; background:var(--bg); border:1px solid var(--bd); border-radius:14px; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 20px 60px rgba(0,0,0,.18),0 4px 16px rgba(0,0,0,.08); transform:translateY(10px) scale(.98); resize:both; }
@@ -268,13 +280,11 @@ const CSS = `
   .dt-modal-inner { padding:16px 18px; display:flex; flex-direction:column; gap:14px; }
   .dt-payload-section { display:flex; flex-direction:column; min-height:200px; }
 
-  /* Response status banner */
-  .dt-res-status { display:flex; align-items:center; gap:8px; padding:8px 12px; border-radius:7px; font-size:12px; font-weight:500; flex-shrink:0; }
-  .dt-res-status.ok  { background:var(--gn-bg); border:1px solid var(--gn-bd); color:var(--gn); }
-  .dt-res-status.err { background:var(--rd-bg); border:1px solid var(--rd-bd); color:var(--rd); }
-  .dt-res-status.oth { background:var(--am-bg); border:1px solid var(--am-bd); color:var(--am); }
-  .dt-res-status-code { font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; }
-  .dt-res-status-text { font-family:'IBM Plex Mono',monospace; font-size:10px; opacity:.8; }
+  /* Compact status pill in the modal header, sat next to the method tag. */
+  .dt-res-status-pill { padding:3px 9px; border-radius:5px; font-family:'IBM Plex Mono',monospace; font-size:9.5px; font-weight:600; letter-spacing:.04em; flex-shrink:0; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dt-res-status-pill.ok  { background:var(--gn-bg); border:1px solid var(--gn-bd); color:var(--gn); }
+  .dt-res-status-pill.err { background:var(--rd-bg); border:1px solid var(--rd-bd); color:var(--rd); }
+  .dt-res-status-pill.oth { background:var(--am-bg); border:1px solid var(--am-bd); color:var(--am); }
 
   /* Response mode tab strip */
   .dt-res-tabs { display:flex; gap:0; margin-bottom:2px; border:1px solid var(--bd); border-radius:8px; overflow:hidden; flex-shrink:0; }
@@ -396,8 +406,8 @@ const CSS = `
   .dt-foot-btn-abort:hover { border-color:var(--rd-bd); color:var(--rd); background:var(--rd-bg); }
   .dt-foot-btn-send { background:var(--ac); border-color:var(--ac); color:var(--ac-tx,#fff); }
   .dt-foot-btn-send:hover { filter:brightness(.92); box-shadow:0 4px 12px var(--ring); }
-  .dt-foot-btn-send.res-send { background:var(--vi); border-color:var(--vi); color:#fff; }
-  .dt-foot-btn-send.res-send:hover { background:#6d28d9; border-color:#6d28d9; color:#fff; box-shadow:0 4px 12px rgba(124,58,237,.28); }
+  .dt-foot-btn-send.res-send { background:var(--vi); border-color:var(--vi); color:var(--vi-tx,#fff); }
+  .dt-foot-btn-send.res-send:hover { filter:brightness(.92); box-shadow:0 4px 12px var(--vi-bd); }
 
   /* Preview */
   .dt-res-preview-section { border-top:1px solid var(--bd); padding-top:12px; margin-top:4px; }
@@ -463,7 +473,7 @@ const CSS = `
   .dt-hadd-btn { display:inline-flex; align-items:center; gap:5px; margin:4px 4px 0; padding:4px 8px; border:1px dashed var(--bd); border-radius:4px; background:transparent; color:var(--mu); font-size:10px; cursor:pointer; transition:all .15s; }
   .dt-hadd-btn:hover { border-color:var(--ac); color:var(--ac); background:var(--ac-bg); }
   .dt-transform-save-btn { padding:8px 12px; font-size:12px; border-radius:6px; border:1px solid var(--vi-bd); background:var(--vi-bg); color:var(--vi); cursor:pointer; transition:all .15s; font-weight:500; }
-  .dt-transform-save-btn:hover { border-color:var(--vi); background:var(--vi); color:white; box-shadow:0 2px 8px rgba(124,58,237,.2); }
+  .dt-transform-save-btn:hover { border-color:var(--vi); background:var(--vi); color:var(--vi-tx,#fff); box-shadow:0 2px 8px var(--vi-bd); }
   .dt-btn-presets { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:10px; background:var(--sf); border:1px solid var(--bd); border-radius:6px; cursor:pointer; color:var(--ac); font-size:12px; font-weight:500; transition:all .15s; width:100%; }
   .dt-btn-presets:hover { border-color:var(--ac-bd); background:var(--ac-bg); }
   /* ── Benchmark ──────────────────────────────────────────────────────────── */
@@ -811,7 +821,7 @@ const CSS = `
   .dt-modal-icon.res { color:var(--vi); }
   .dt-foot-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; border-radius:9px; }
   .dt-foot-btn-send:hover { background:var(--ac); filter:brightness(1.08); border-color:var(--ac); box-shadow:0 4px 14px var(--ring); }
-  .dt-foot-btn-send.res-send:hover { background:var(--vi); filter:brightness(1.08); border-color:var(--vi); box-shadow:0 4px 14px rgba(122,75,232,.32); }
+  .dt-foot-btn-send.res-send:hover { background:var(--vi); filter:brightness(1.08); border-color:var(--vi); box-shadow:0 4px 14px var(--vi-bd); }
   .dt-preview-arrow { color:var(--mu); }
 
   /* ── Portal tooltip: rendered at <html> level (outside the transformed

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.4.2
+// @version      3.5.2
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -194,8 +194,40 @@
   // group + an activeIdx + a regex matchPattern) now lives in the Base URL
   // plugin's getDefaultState — see Devtools_baseurl.js.
 
-  // ─── DOM helper ───────────────────────────────────────────────────────────────
-  const $ = id => document.getElementById(id);
+  // ─── Shadow root ──────────────────────────────────────────────────────────────
+  // The entire UI is mounted inside a shadow root so host-page CSS cannot reach
+  // it — not even rules with !important, aggressive resets, or `#app *` blanket
+  // styles. A shadow boundary only lets INHERITED properties (font/color/…)
+  // through; `all:initial` on the host severs that too (see the `:host` rule in
+  // Devtools_css.js). Everything the UI creates at runtime (overlays, the tip
+  // portal, the toast, the recorder's kebab menu) appends into this root, and
+  // every UI lookup goes through the `$`/`$$`/`$1` helpers below, which query
+  // the shadow tree instead of `document`. Page-scoped queries (Form Autofill's
+  // form detection) deliberately keep using `document`.
+  let dtHost = null, dtRoot = null;
+  function ensureRoot() {
+    if (dtRoot) return dtRoot;
+    if (!document.documentElement) return null;
+    dtHost = document.createElement('div');
+    dtHost.id = 'dt-host';
+    dtHost.style.cssText = 'all:initial'; // block inherited page styles from bleeding in
+    dtRoot = dtHost.attachShadow({ mode: 'open' });
+    // Single wrapper so descendant-combinator and :has() selectors (e.g. the
+    // overlay-open z-index bump) have an element to scope against — a ShadowRoot
+    // isn't itself selectable.
+    const wrap = document.createElement('div');
+    wrap.id = 'dt-root';
+    dtRoot.appendChild(wrap);
+    document.documentElement.appendChild(dtHost);
+    return dtRoot;
+  }
+  // Where UI nodes mount (the #dt-root wrapper), falling back to the shadow root.
+  function rootMount() { const r = ensureRoot(); return r ? (r.getElementById('dt-root') || r) : null; }
+
+  // ─── DOM helpers (scoped to the shadow root) ──────────────────────────────────
+  const $  = id  => dtRoot ? dtRoot.getElementById(id) : null;
+  const $$ = sel => dtRoot ? dtRoot.querySelectorAll(sel) : [];
+  const $1 = sel => dtRoot ? dtRoot.querySelector(sel) : null;
 
   // ─── Editor theme helpers ─────────────────────────────────────────────────────
   function getEditorTheme() {
@@ -229,18 +261,20 @@
   // .dt-ready is added the `:not(.dt-ready)` selector stops matching and the
   // normal (transitioned) styles take over.
   function injectCriticalHide() {
-    if (!document.documentElement || document.getElementById('dt-critical-hide')) return;
+    const root = ensureRoot();
+    if (!root || root.getElementById('dt-critical-hide')) return;
     const s = document.createElement('style');
     s.id = 'dt-critical-hide';
     s.textContent = '#dt-sidebar:not(.dt-ready),#dt-tab:not(.dt-ready),#dt-req-overlay:not(.dt-ready),#dt-res-overlay:not(.dt-ready),#dt-presets-overlay:not(.dt-ready),#dt-save-preset-overlay:not(.dt-ready),#dt-baseurl-fab:not(.dt-ready){visibility:hidden!important;}';
-    document.documentElement.appendChild(s);
+    root.appendChild(s);
   }
 
   function inject() {
     injectCriticalHide(); // safety: ensure the guard exists before any element is inserted
+    const mount = rootMount();
     const style = document.createElement('style');
     style.textContent = CSS;
-    document.documentElement.appendChild(style);
+    mount.appendChild(style);
     const wrap = document.createElement('div');
     const pluginNavHtml = plugins.map(p => p.navLabel
       ? `<button class="dt-nav-btn" data-panel="${p.id}">${p.navIcon ? icon(p.navIcon, 13, 1.9) : ''}<span>${escHtml(p.navLabel)}</span></button>` : '').join('');
@@ -249,7 +283,7 @@
     wrap.innerHTML = HTML
       .replace('<!--dt-nav-plugins-->', pluginNavHtml)
       .replace('<!--dt-panel-plugins-->', pluginPanelHtml);
-    while (wrap.firstChild) document.documentElement.appendChild(wrap.firstChild);
+    while (wrap.firstChild) mount.appendChild(wrap.firstChild);
 
     requestAnimationFrame(() => requestAnimationFrame(() => {
       ['dt-sidebar','dt-tab','dt-req-overlay','dt-res-overlay','dt-presets-overlay','dt-save-preset-overlay']
@@ -270,7 +304,7 @@
   function applyEditorTheme() {
     const t = getEditorTheme(), f = getEditorFont(), fs = state.editorSettings.fontSize;
     let styleTag = $('dt-editor-theme-style');
-    if (!styleTag) { styleTag = document.createElement('style'); styleTag.id='dt-editor-theme-style'; document.documentElement.appendChild(styleTag); }
+    if (!styleTag) { styleTag = document.createElement('style'); styleTag.id='dt-editor-theme-style'; rootMount().appendChild(styleTag); }
     styleTag.textContent = `
       #dt-tab, #dt-sidebar, .dt-overlay, #dt-baseurl-fab, .dt-rec-kebab-menu { --dt-ed-bg:${t.bg}; --dt-ed-text:${t.text}; --dt-ed-font:${f}; --dt-ed-fs:${fs}px; --er:${t.invalid}; }
       .dt-editor-wrap { background:${t.bg}; border-color:${t.bdr}; }
@@ -340,6 +374,31 @@
     const [r, g, b] = hexToRgb(h).map(v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); });
     return .2126 * r + .7152 * g + .0722 * b;
   }
+  // Rotate a color's hue by `deg` degrees, preserving saturation/lightness.
+  // Used to derive the response modal's secondary accent (--vi) from the palette
+  // accent, so it stays visually distinct from the request accent yet on-theme.
+  function rotateHue(hex, deg) {
+    let [r, g, b] = hexToRgb(hex).map(v => v / 255);
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    let h = 0; const l = (max + min) / 2;
+    const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+    if (d !== 0) {
+      if (max === r) h = ((g - b) / d) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60; if (h < 0) h += 360;
+    }
+    h = (h + deg) % 360;
+    const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = l - c / 2;
+    let rp = 0, gp = 0, bp = 0;
+    if (h < 60) [rp, gp, bp] = [c, x, 0];
+    else if (h < 120) [rp, gp, bp] = [x, c, 0];
+    else if (h < 180) [rp, gp, bp] = [0, c, x];
+    else if (h < 240) [rp, gp, bp] = [0, x, c];
+    else if (h < 300) [rp, gp, bp] = [x, 0, c];
+    else [rp, gp, bp] = [c, 0, x];
+    return '#' + [rp, gp, bp].map(v => Math.round((v + m) * 255).toString(16).padStart(2, '0')).join('');
+  }
 
   function applySidebarTheme() {
     const { appearance, sbTheme, customBg, customSf, customTx, customBd } = state.layout;
@@ -358,12 +417,19 @@
     // Non-default palettes and custom overrides need inline vars; the plain
     // default palette is fully covered by the stylesheet (+ .dt-dark).
     const useInlineVars = appearance === 'custom' || (sbTheme && sbTheme !== 'default');
-    const acDerived = tokens.ac ? {
-      bg:   mixHex(tokens.bg, tokens.ac, isDark ? 0.22 : 0.10),
-      bd:   mixHex(tokens.bg, tokens.ac, isDark ? 0.45 : 0.32),
-      tx:   hexLum(tokens.ac) > 0.36 ? '#14161c' : '#ffffff',
-      ring: `rgba(${hexToRgb(tokens.ac).join(',')},.3)`,
-    } : null;
+    // Derive an accent's tint set (bg/bd/contrast-text/ring) from a solid color.
+    const deriveAccent = ac => ({
+      bg:   mixHex(tokens.bg, ac, isDark ? 0.22 : 0.10),
+      bd:   mixHex(tokens.bg, ac, isDark ? 0.45 : 0.32),
+      tx:   hexLum(ac) > 0.36 ? '#14161c' : '#ffffff',
+      ring: `rgba(${hexToRgb(ac).join(',')},.3)`,
+    });
+    const acDerived = tokens.ac ? deriveAccent(tokens.ac) : null;
+    // Secondary accent for the response modal (--vi). Hue-rotated from the
+    // palette accent so it stays distinct from the request accent but tracks
+    // the chosen system theme instead of a hardcoded violet.
+    const vi = tokens.ac ? rotateHue(tokens.ac, 45) : null;
+    const viDerived = vi ? deriveAccent(vi) : null;
 
     // All themed elements: sidebar, tab, and all modal overlays
     const themedEls = [
@@ -398,14 +464,20 @@
           el.style.setProperty('--ac-tx', acDerived.tx);
           el.style.setProperty('--ring', acDerived.ring);
         }
+        if (viDerived) {
+          el.style.setProperty('--vi', vi);
+          el.style.setProperty('--vi-bg', viDerived.bg);
+          el.style.setProperty('--vi-bd', viDerived.bd);
+          el.style.setProperty('--vi-tx', viDerived.tx);
+        }
       } else {
-        ['--bg','--sf','--sf2','--tx','--tx2','--bd','--bd2','--mu','--fa','--ac','--ac-bg','--ac-bd','--ac-tx','--ring'].forEach(v => el.style.removeProperty(v));
+        ['--bg','--sf','--sf2','--tx','--tx2','--bd','--bd2','--mu','--fa','--ac','--ac-bg','--ac-bd','--ac-tx','--ring','--vi','--vi-bg','--vi-bd','--vi-tx'].forEach(v => el.style.removeProperty(v));
       }
     });
 
     // Sync appearance tab UI
-    document.querySelectorAll('.dt-appearance-tab').forEach(b => b.classList.toggle('active', b.dataset.sbmode === appearance));
-    document.querySelectorAll('.dt-sb-palette').forEach(b => b.classList.toggle('active', b.dataset.sbtheme === (sbTheme || 'default')));
+    $$('.dt-appearance-tab').forEach(b => b.classList.toggle('active', b.dataset.sbmode === appearance));
+    $$('.dt-sb-palette').forEach(b => b.classList.toggle('active', b.dataset.sbtheme === (sbTheme || 'default')));
     const customPanel = $('dt-sb-custom-colors');
     if (customPanel) customPanel.style.display = appearance === 'custom' ? '' : 'none';
     // The system-theme palettes only drive the light/dark/auto modes — in
@@ -490,7 +562,7 @@
     // Sync settings UI
     const slider = $('dt-sb-width-slider');
     if (slider) { slider.value = width; const wv = $('dt-sb-width-val'); if (wv) wv.value = width; }
-    document.querySelectorAll('.dt-side-btn').forEach(b => b.classList.toggle('active', b.dataset.side === side));
+    $$('.dt-side-btn').forEach(b => b.classList.toggle('active', b.dataset.side === side));
   }
 
   // Wires a show/hide eye-icon toggle for a CSS-masked (not type=password) input —
@@ -514,7 +586,7 @@
     // state.recorder only exists when the Recorder plugin is installed —
     // plugins are optional, so never assume it.
     const hasKey = !!((state.recorder && state.recorder.postmanApiKey) || '').trim();
-    document.querySelectorAll('[data-act="postman"]').forEach(btn => {
+    $$('[data-act="postman"]').forEach(btn => {
       btn.disabled = !hasKey;
       btn.title = hasKey ? '' : 'Add a Postman API key in Settings (gear icon, top right) to enable this';
     });
@@ -525,7 +597,7 @@
   // exists (used by cross-tab storage sync) — it no-ops if the DOM isn't there.
   function syncKeybindUI() {
     KEYBIND_DEFS.forEach(def => {
-      const row = document.querySelector(`.dt-kb-row[data-kb="${def.id}"]`);
+      const row = $1(`.dt-kb-row[data-kb="${def.id}"]`);
       if (!row) return;
       const combo = row.querySelector('.dt-kb-combo');
       const btn = row.querySelector('.dt-kb-input');
@@ -551,8 +623,8 @@
   function bindKeybindSettings() {
     // Cancel capture on any outside click.
     KEYBIND_DEFS.forEach(def => {
-      const btn = document.querySelector(`.dt-kb-input[data-kb-btn="${def.id}"]`);
-      const reset = document.querySelector(`.dt-kb-reset[data-kb-reset="${def.id}"]`);
+      const btn = $1(`.dt-kb-input[data-kb-btn="${def.id}"]`);
+      const reset = $1(`.dt-kb-reset[data-kb-reset="${def.id}"]`);
       if (btn) btn.addEventListener('click', e => { e.stopPropagation(); startKeybindCapture(def.id); });
       if (reset) reset.addEventListener('click', e => {
         e.stopPropagation();
@@ -596,7 +668,7 @@
       state._captureCancel = null;
       syncKeybindUI();
     };
-    const onOutside = e => { if (!e.target.closest || !e.target.closest(`.dt-kb-row[data-kb="${id}"]`)) finish(); };
+    const onOutside = e => { const t = (e.composedPath && e.composedPath()[0]) || e.target; if (!t.closest || !t.closest(`.dt-kb-row[data-kb="${id}"]`)) finish(); };
     // Store the cancel fn so cancelKeybindCapture() can reach it.
     state._captureCancel = finish;
     document.addEventListener('keydown', onKey, true);
@@ -623,7 +695,7 @@
     }
 
     // ── Position & drag ──────────────────────────────────────────────────────────
-    document.querySelectorAll('.dt-side-btn').forEach(btn => {
+    $$('.dt-side-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const tab = $('dt-tab');
         // Instantly reposition without transition when switching sides
@@ -662,7 +734,7 @@
     if(wdInc) wdInc.addEventListener('click',()=>setLayoutWidth(state.layout.width+4));
 
     // ── Appearance mode tabs ─────────────────────────────────────────────────────
-    document.querySelectorAll('.dt-appearance-tab').forEach(btn => {
+    $$('.dt-appearance-tab').forEach(btn => {
       btn.addEventListener('click', () => {
         const prev = state.layout.appearance;
         state.layout.appearance = btn.dataset.sbmode;
@@ -772,8 +844,8 @@
 
   function syncEditorSettingControls() {
     const es = state.editorSettings;
-    document.querySelectorAll('.dt-theme-swatch').forEach(s => s.classList.toggle('active', s.dataset.theme === es.theme));
-    document.querySelectorAll('#dt-sb-font-list .dt-font-opt').forEach(o => o.classList.toggle('active', o.dataset.font === es.font));
+    $$('.dt-theme-swatch').forEach(s => s.classList.toggle('active', s.dataset.theme === es.theme));
+    $$('#dt-sb-font-list .dt-font-opt').forEach(o => o.classList.toggle('active', o.dataset.font === es.font));
     const sl=$('dt-sb-size-slider'), vi=$('dt-sb-size-val');
     if(sl) sl.value=es.fontSize; if(vi) vi.value=es.fontSize;
     syncColorInputsToState('dt-sb-bg', es.customBg||'');
@@ -818,7 +890,7 @@
       el.dataset.theme = key;
       el.innerHTML = `<div class="dt-swatch-preview" style="background:${t.bg}"><span class="dt-swatch-preview-inner" style="color:${t.text};font-family:'IBM Plex Mono',monospace">{…}</span></div><div class="dt-swatch-name" style="color:${t.text||'inherit'};background:${t.bg}">${t.name}</div>`;
       el.addEventListener('click', () => {
-        document.querySelectorAll(`#${containerId} .dt-theme-swatch`).forEach(s=>s.classList.remove('active'));
+        $$(`#${containerId} .dt-theme-swatch`).forEach(s=>s.classList.remove('active'));
         el.classList.add('active');
         onChange(key);
       });
@@ -859,7 +931,7 @@
       el.dataset.font = f.id;
       el.innerHTML = `<div class="dt-font-opt-radio"></div><span class="dt-font-opt-name" style="font-family:${f.css}">${f.name}</span><span class="dt-font-opt-preview" style="font-family:${f.css}">const x = 1;</span>`;
       el.addEventListener('click', () => {
-        document.querySelectorAll(`#${containerId} .dt-font-opt`).forEach(o=>o.classList.remove('active'));
+        $$(`#${containerId} .dt-font-opt`).forEach(o=>o.classList.remove('active'));
         el.classList.add('active');
         onChange(f.id);
       });
@@ -913,11 +985,11 @@
     // portal at document root has no transformed ancestor, so fixed positioning
     // is true viewport-relative and works on either side. Delegated mouseover/
     // mouseout also covers tips added later by plugins.
-    let tipPortal = document.getElementById('dt-tip-portal');
+    let tipPortal = $('dt-tip-portal');
     if (!tipPortal) {
       tipPortal = document.createElement('div');
       tipPortal.id = 'dt-tip-portal';
-      document.documentElement.appendChild(tipPortal);
+      rootMount().appendChild(tipPortal);
     }
     function hideTip() { tipPortal.classList.remove('visible'); }
     function showTip(tipEl) {
@@ -968,15 +1040,18 @@
       // Only close sidebar on outside click if no modal is open — matched by
       // class so plugin-created overlays (e.g. Form Autofill's config modal,
       // which isn't part of the static HTML template) count too.
-      const anyModalOpen = !!document.querySelector('.dt-overlay.visible');
-      if (!anyModalOpen && sb && !sb.contains(e.target) && !tab.contains(e.target) && !e.target.closest('#dt-rec-kebab-portal')) closeSidebar();
+      const anyModalOpen = !!$1('.dt-overlay.visible');
+      // Under shadow DOM a click inside our UI retargets `e.target` to the host,
+      // so use composedPath()[0] — the true innermost node — for the hit tests.
+      const t = (e.composedPath && e.composedPath()[0]) || e.target;
+      if (!anyModalOpen && sb && !sb.contains(t) && !tab.contains(t) && !(t.closest && t.closest('#dt-rec-kebab-portal'))) closeSidebar();
     }, true);
 
     // Nav
     function switchToPanel(panelName) {
-      document.querySelectorAll('.dt-nav-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.dt-panel').forEach(p => p.classList.remove('active'));
-      const btn = document.querySelector(`.dt-nav-btn[data-panel="${panelName}"]`);
+      $$('.dt-nav-btn').forEach(b => b.classList.remove('active'));
+      $$('.dt-panel').forEach(p => p.classList.remove('active'));
+      const btn = $1(`.dt-nav-btn[data-panel="${panelName}"]`);
       // The nav scrolls horizontally (6+ tabs overflow narrow sidebars) — keep
       // the selected tab in view.
       if (btn) { btn.classList.add('active'); btn.scrollIntoView && btn.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
@@ -985,13 +1060,13 @@
       const gearBtn = $('dt-settings-btn');
       if (gearBtn) gearBtn.classList.toggle('active', panelName === 'settings');
     }
-    document.querySelectorAll('.dt-nav-btn').forEach(btn => btn.addEventListener('click', () => switchToPanel(btn.dataset.panel)));
+    $$('.dt-nav-btn').forEach(btn => btn.addEventListener('click', () => switchToPanel(btn.dataset.panel)));
     const settingsBtn = $('dt-settings-btn');
     if (settingsBtn) settingsBtn.addEventListener('click', () => switchToPanel('settings'));
     // The About panel has no nav button — previously it was dead, unreachable
     // markup. The header icon/title now opens it.
-    const headIcon = document.querySelector('#dt-sidebar .dt-head-icon');
-    const headTitle = document.querySelector('#dt-sidebar .dt-head-title');
+    const headIcon = $1('#dt-sidebar .dt-head-icon');
+    const headTitle = $1('#dt-sidebar .dt-head-title');
     [headIcon, headTitle].forEach(el => {
       if (!el) return;
       el.style.cursor = 'pointer';
@@ -1006,7 +1081,7 @@
     // request and response interceptors can now use different method sets and
     // regexes. See buildFilterBlock() in Devtools_html.js.
     ['net', 'req', 'res'].forEach(bindFilterNs);
-    document.querySelectorAll('.dt-disclosure-hd').forEach(hd =>
+    $$('.dt-disclosure-hd').forEach(hd =>
       hd.addEventListener('click', () => hd.closest('.dt-disclosure').classList.toggle('open')));
     ['net', 'req', 'res'].forEach(applyFilterToUI);
     updateFilterHints();
@@ -1064,8 +1139,8 @@
     bindModalResize('dt-res-modal');
 
     // Response mode tabs
-    document.querySelectorAll('.dt-res-tab').forEach(tab => tab.addEventListener('click', () => {
-      document.querySelectorAll('.dt-res-tab').forEach(t=>t.classList.remove('active'));
+    $$('.dt-res-tab').forEach(tab => tab.addEventListener('click', () => {
+      $$('.dt-res-tab').forEach(t=>t.classList.remove('active'));
       tab.classList.add('active');
       const mode = tab.dataset.restab;
       $('dt-res-manual').style.display = mode==='manual' ? 'flex' : 'none';
@@ -1152,8 +1227,8 @@
 
   // ─── Helpers ──────────────────────────────────────────────────────────────────
   function switchResTab(mode) {
-    document.querySelectorAll('.dt-res-tab').forEach(t=>t.classList.remove('active'));
-    document.querySelector(`.dt-res-tab[data-restab="${mode}"]`).classList.add('active');
+    $$('.dt-res-tab').forEach(t=>t.classList.remove('active'));
+    $1(`.dt-res-tab[data-restab="${mode}"]`).classList.add('active');
     $('dt-res-manual').style.display=mode==='manual'?'flex':'none';
     $('dt-res-gui').style.display=mode==='gui'?'flex':'none';
     $('dt-res-code').style.display=mode==='code'?'flex':'none';
@@ -1289,14 +1364,15 @@
       if (el) el.checked = isNet ? netMethodOn(m) : s.methods.includes(m);
     });
     const mode = isNet ? netMode() : s.mode;
-    document.querySelectorAll(`.dt-mode-btn[data-ns="${ns}"]`).forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    $$(`.dt-mode-btn[data-ns="${ns}"]`).forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
     const chip = $(`dt-${ns}-chip`); if (chip) chip.textContent = mode === 'auto' ? 'Auto' : 'Regex';
     const rw = $(`dt-${ns}-rwrap`); if (rw) rw.classList.toggle('visible', mode === 'manual');
     const ri = $(`dt-${ns}-regex`);
     if (ri) {
       const rx = isNet ? netRegex() : s.urlRegex;
       // Don't stomp the caret if the user is actively typing in this field.
-      if (document.activeElement !== ri) ri.value = rx;
+      // Focus inside a shadow tree surfaces on the shadow root, not document.
+      if (dtRoot.activeElement !== ri) ri.value = rx;
       setRegexDot($(`dt-${ns}-rdot`), ri.value);
     }
   }
@@ -1316,7 +1392,7 @@
         refreshFilters();
       });
     });
-    document.querySelectorAll(`.dt-mode-btn[data-ns="${ns}"]`).forEach(btn => btn.addEventListener('click', () => {
+    $$(`.dt-mode-btn[data-ns="${ns}"]`).forEach(btn => btn.addEventListener('click', () => {
       const mode = btn.dataset.mode;
       if (ns === 'net') {
         state.req.mode = mode; state.res.mode = mode;
@@ -1410,7 +1486,7 @@
   // ─── GET Params ───────────────────────────────────────────────────────────────
   function addParamRow(listId,key,val) { const list=$(listId);const row=document.createElement('div');row.className='dt-param-row';row.innerHTML=`<input class="dt-param-input" placeholder="key" value="${escHtml(key)}" data-role="key"><span class="dt-param-eq">=</span><input class="dt-param-input" placeholder="value" value="${escHtml(val)}" data-role="val"><button class="dt-param-dup" title="Duplicate row">${icon('copy',13,1.8)}</button><button class="dt-param-del" title="Remove row">${icon('x',13,2.2)}</button>`;row.querySelector('.dt-param-del').addEventListener('click',()=>row.remove());row.querySelector('.dt-param-dup').addEventListener('click',()=>{const k=row.querySelector('[data-role=key]').value;const v=row.querySelector('[data-role=val]').value;const newRow=row.cloneNode(true);newRow.querySelector('[data-role=key]').value=k;newRow.querySelector('[data-role=val]').value=v;newRow.querySelector('.dt-param-del').addEventListener('click',()=>newRow.remove());newRow.querySelector('.dt-param-dup').addEventListener('click',function(){const k2=newRow.querySelector('[data-role=key]').value;const v2=newRow.querySelector('[data-role=val]').value;addParamRow(listId,k2,v2);});row.after(newRow);});list.appendChild(row); }
   // Suggested rows are excluded — they're inert until the user clicks "+ Add".
-  function buildEditedUrl(originalUrl,listId) { try{const u=new URL(originalUrl.startsWith('http')?originalUrl:'https://x.com'+originalUrl);u.search='';document.querySelectorAll(`#${listId} .dt-param-row:not(.dt-param-row-suggested)`).forEach(r=>{const k=r.querySelector('[data-role=key]').value.trim(),v=r.querySelector('[data-role=val]').value;if(k)u.searchParams.append(k,v);});return originalUrl.startsWith('http')?u.toString():u.pathname+u.search;}catch{return originalUrl;} }
+  function buildEditedUrl(originalUrl,listId) { try{const u=new URL(originalUrl.startsWith('http')?originalUrl:'https://x.com'+originalUrl);u.search='';$$(`#${listId} .dt-param-row:not(.dt-param-row-suggested)`).forEach(r=>{const k=r.querySelector('[data-role=key]').value.trim(),v=r.querySelector('[data-role=val]').value;if(k)u.searchParams.append(k,v);});return originalUrl.startsWith('http')?u.toString():u.pathname+u.search;}catch{return originalUrl;} }
 
   // ─── API Docs cross-check (request interceptor) ────────────────────────────────
   // Cross-checks a pending request against whatever the API Recorder plugin has
@@ -1543,7 +1619,7 @@
 
   function collectHeaders(innerId) {
     const headers={};
-    document.querySelectorAll(`#${innerId} .dt-header-row-edit`).forEach(row => {
+    $$(`#${innerId} .dt-header-row-edit`).forEach(row => {
       const k=row.querySelector('.dt-hkey-input')?.value.trim();
       const v=row.querySelector('.dt-hval-input')?.value??'';
       if(k) headers[k]=v;
@@ -1578,7 +1654,7 @@
     if(Array.isArray(val)&&val.length>80){const more=document.createElement('div');more.className='dt-tree-node';more.style.color='var(--fa)';more.style.paddingLeft=(depth*14+4)+'px';more.textContent=`… +${val.length-80} more`;container.appendChild(more);}
   }
   function makeTreeNode(path,depth,key,val,type){const node=document.createElement('div');node.className='dt-tree-node';node.style.paddingLeft=(depth*14+4)+'px';const preview=type==='object'?'{…}':type==='array'?`[${val.length}]`:String(val).slice(0,24)+(String(val).length>24?'…':'');node.innerHTML=`<span class="dt-tree-arrow" style="width:10px;flex-shrink:0"></span><span class="dt-tree-key">${escHtml(String(key))}</span><span class="dt-tree-type">${type}</span><span class="dt-tree-val">${escHtml(preview)}</span>`;return node;}
-  function selectPath(path){currentResPath=path;const display=$('dt-res-path-display');if(display)display.textContent='data.'+path.join('.');document.querySelectorAll('.dt-tree-node').forEach(n=>n.classList.remove('selected'));}
+  function selectPath(path){currentResPath=path;const display=$('dt-res-path-display');if(display)display.textContent='data.'+path.join('.');$$('.dt-tree-node').forEach(n=>n.classList.remove('selected'));}
   function getByPath(obj,pathStr){if(!pathStr||pathStr==='—')return obj;const parts=pathStr.replace(/^data\./,'').split('.');let cur=obj;for(const p of parts){if(cur===null||cur===undefined)return undefined;cur=cur[p];}return cur;}
 
   // ─── Presets management ───────────────────────────────────────────────────────
@@ -2050,7 +2126,10 @@
     $('dt-res-url').textContent=res.url;
     const mt=$('dt-res-method');mt.textContent=res.method;mt.className=`dt-method-tag ${res.method}`;
     const cls=res.status>=200&&res.status<300?'ok':res.status>=400?'err':'oth';
-    $('dt-res-status-bar').innerHTML=`<div class="dt-res-status ${cls}"><span class="dt-res-status-code">${res.status}</span><span class="dt-res-status-text"> ${res.statusText||''}</span></div>`;
+    const stEl=$('dt-res-status');
+    stEl.className=`dt-res-status-pill ${cls}`;
+    stEl.textContent=`${res.status}${res.statusText?' '+res.statusText:''}`;
+    stEl.title=`${res.status} ${res.statusText||''}`.trim();
     switchResTab('manual');
     $('dt-res-transform-err').className='dt-transform-err';
     $('dt-res-wrap-key').style.display='none';
@@ -2482,7 +2561,7 @@
     if (!_toastEl) {
       _toastEl = document.createElement('div');
       _toastEl.id = 'dt-hotkey-toast';
-      document.documentElement.appendChild(_toastEl);
+      rootMount().appendChild(_toastEl);
     }
     _toastEl.innerHTML = `<span class="dt-hotkey-toast-dot${on ? ' on' : ''}"></span>${escHtml(msg)}`;
     _toastEl.classList.add('show');
@@ -2780,7 +2859,13 @@
   // which aren't initialized yet earlier in the file.
   const ctx = {
     Store, state,
-    $: (id) => document.getElementById(id),
+    // Shadow-scoped DOM access for plugins. `$`/`$$`/`$1` query the sidebar's
+    // shadow tree; `root` is where plugin-created overlays/menus must mount
+    // (page-level append would land outside the shadow and lose all styling).
+    $: (id) => (dtRoot ? dtRoot.getElementById(id) : null),
+    $$: (sel) => (dtRoot ? dtRoot.querySelectorAll(sel) : []),
+    $1: (sel) => (dtRoot ? dtRoot.querySelector(sel) : null),
+    root: () => rootMount(),
     escHtml, schemaBlock, tip, icon, METHOD_COLORS, ALL_METHODS, BASEURL_COLORS, getGroupHosts,
     getFetch: () => _fetch,
     updatePostmanKeyWarning,

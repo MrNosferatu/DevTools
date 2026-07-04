@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — API Recorder Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.4.1
+// @version      3.5.2
 // @description  API Recorder plugin for DevTools Sidebar — passively documents endpoint shapes and exports/pushes them as a Postman collection.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -11,7 +11,7 @@
 // the returned plugin object to wire up the recorder's nav button, panel,
 // settings persistence, and network capture hook.
 DT_registerPlugin(function createRecorderPlugin(ctx) {
-  const { Store, state, $, escHtml, schemaBlock, tip, icon, ALL_METHODS, METHOD_COLORS, getGroupHosts, getFetch } = ctx;
+  const { Store, state, $, root, escHtml, schemaBlock, tip, icon, ALL_METHODS, METHOD_COLORS, getGroupHosts, getFetch } = ctx;
 
   // ─── API Recorder panel HTML ──────────────────────────────────────────────────
   function buildRecorderPanel() {
@@ -703,8 +703,8 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     // while the kebab menu is open — remember which bucket it belonged to so
     // it can be reopened against the freshly-rendered button instead of just
     // vanishing out from under the user.
-    const reopenKebabFor = document.getElementById('dt-rec-kebab-portal')?.classList.contains('open')
-      ? document.getElementById('dt-rec-kebab-portal')._bucketKey : null;
+    const reopenKebabFor = $('dt-rec-kebab-portal')?.classList.contains('open')
+      ? $('dt-rec-kebab-portal')._bucketKey : null;
     closeKebabMenu();
     [...list.querySelectorAll('.dt-rec-bucket')].forEach(el => el.remove());
     const buckets = getDisplayBuckets().sort((a,b) => Object.keys(b.endpoints).length - Object.keys(a.endpoints).length);
@@ -748,17 +748,17 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
   // entirely sidesteps that, and positioning it via getBoundingClientRect()
   // keeps it visually anchored under whichever kebab button was clicked.
   function getKebabMenuEl() {
-    let menu = document.getElementById('dt-rec-kebab-portal');
+    let menu = $('dt-rec-kebab-portal');
     if (!menu) {
       menu = document.createElement('div');
       menu.id = 'dt-rec-kebab-portal';
       menu.className = 'dt-rec-kebab-menu';
-      document.body.appendChild(menu);
+      root().appendChild(menu);
     }
     return menu;
   }
   function closeKebabMenu() {
-    const menu = document.getElementById('dt-rec-kebab-portal');
+    const menu = $('dt-rec-kebab-portal');
     if (menu) { menu.classList.remove('open'); menu.innerHTML = ''; menu._bucketKey = null; }
   }
   function toggleKebabMenu(anchorBtn, bucket) {
@@ -770,7 +770,7 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     // The portal lives on <body>, outside the sidebar, so it doesn't inherit
     // the sidebar's .dt-dark class or custom-appearance inline CSS vars —
     // without this mirror it always rendered with the light theme.
-    const sb = document.getElementById('dt-sidebar');
+    const sb = $('dt-sidebar');
     if (sb) {
       menu.classList.toggle('dt-dark', sb.classList.contains('dt-dark'));
       ['--bg','--sf','--sf2','--tx','--tx2','--bd','--bd2','--mu'].forEach(v => {
@@ -980,7 +980,9 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     // can never be mistaken for an "outside" click and instantly close the menu
     // it just opened.
     document.addEventListener('click', e => {
-      if (e.target.closest('.dt-rec-kebab-btn') || e.target.closest('#dt-rec-kebab-portal')) return;
+      // Shadow DOM retargets e.target to the host; use the true inner node.
+      const t = (e.composedPath && e.composedPath()[0]) || e.target;
+      if (t.closest && (t.closest('.dt-rec-kebab-btn') || t.closest('#dt-rec-kebab-portal'))) return;
       closeKebabMenu();
     });
 
