@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.2
+// @version      3.6.3
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -276,8 +276,24 @@
     root.appendChild(s);
   }
 
+  // Web fonts — a document-level <link>, deliberately NOT an @import inside
+  // the shadow stylesheet: (1) the @import made the whole sheet wait on the
+  // network before applying, flashing an unstyled skeleton on cold loads;
+  // (2) @font-face inside a shadow tree doesn't register fonts in Chromium,
+  // so document level is the only place they reliably load from anyway. If a
+  // host page's CSP blocks the CDN, the UI just falls back to system fonts.
+  function injectFonts() {
+    if (document.getElementById('dt-fonts')) return;
+    const link = document.createElement('link');
+    link.id = 'dt-fonts';
+    link.rel = 'stylesheet';
+    link.href = 'https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@300;400;500&display=swap';
+    (document.head || document.documentElement).appendChild(link);
+  }
+
   function inject() {
     injectCriticalHide(); // safety: ensure the guard exists before any element is inserted
+    injectFonts();
     const mount = rootMount();
     const style = document.createElement('style');
     style.textContent = CSS;
@@ -292,11 +308,24 @@
       .replace('<!--dt-panel-plugins-->', pluginPanelHtml);
     while (wrap.firstChild) mount.appendChild(wrap.firstChild);
 
-    requestAnimationFrame(() => requestAnimationFrame(() => {
+    // Reveal only once the main stylesheet is OBSERVABLY applied, not after a
+    // fixed frame count. The old double-rAF reveal assumed injection implies
+    // application, but engines can hold a sheet pending (historically: the
+    // Google-Fonts @import that used to sit at its top) — the hide guard then
+    // expired while the sidebar was still unstyled, flashing a raw HTML
+    // skeleton on cold loads. Probe a rule the sheet is known to set and lift
+    // the guard only when it's live, with a 3s hard cap so the UI can never
+    // be lost outright if a host page interferes with the probe.
+    const revealStart = performance.now();
+    const tryReveal = () => {
+      const sb = $('dt-sidebar');
+      const applied = sb && getComputedStyle(sb).position === 'fixed';
+      if (!applied && performance.now() - revealStart < 3000) { requestAnimationFrame(tryReveal); return; }
       ['dt-sidebar','dt-tab','dt-req-overlay','dt-res-overlay','dt-presets-overlay','dt-save-preset-overlay']
         .forEach(id => { const el=$(id); if(el) { el.style.display=''; el.classList.add('dt-ready'); } });
       const fab=$('dt-baseurl-fab'); if(fab) fab.classList.add('dt-ready');
-    }));
+    };
+    requestAnimationFrame(tryReveal);
 
     bindUI();
     syncNetworkPanel();
