@@ -21,6 +21,12 @@ const VERSION_RE = /(\/\/\s*@version\s+)(\d+)\.(\d+)\.(\d+)/;
 // Runtime copy of the version (Devtools_constants.js) — shown in the About
 // panel, kept in lockstep with the @version headers.
 const DT_VERSION_RE = /(const DT_VERSION = ')(\d+\.\d+\.\d+)(')/;
+// jsDelivr @require pins in the entry script (Devtools.user.js). Dependencies
+// are served from jsDelivr pinned to the release TAG — raw.githubusercontent
+// rate-limits the 10-file burst Tampermonkey fires at install/update (429s ->
+// missing dependencies), and a pinned tag also guarantees the requires always
+// match the entry's version instead of racing a branch update.
+const JSDELIVR_RE = /(cdn\.jsdelivr\.net\/gh\/[^@\s]+@v)(\d+\.\d+\.\d+)/g;
 
 const files = readdirSync(dir).filter(f => f.endsWith('.js') || f === ENTRY);
 const entryPath = join(dir, ENTRY);
@@ -46,9 +52,11 @@ for (const f of files) {
   if (!VERSION_RE.test(src)) continue;
   const out = src
     .replace(VERSION_RE, (_all, lead) => `${lead}${next}`)
-    .replace(DT_VERSION_RE, (_all, lead, _v, trail) => `${lead}${next}${trail}`);
+    .replace(DT_VERSION_RE, (_all, lead, _v, trail) => `${lead}${next}${trail}`)
+    .replace(JSDELIVR_RE, (_all, lead) => `${lead}${next}`);
   if (out !== src) { writeFileSync(p, out); changed++; }
 }
 
 console.log(`Version ${maj}.${min}.${pat} -> ${next}  (${changed} file${changed === 1 ? '' : 's'} updated)`);
-console.log('Next: git add -A && git commit -m "v' + next + '" && git push');
+console.log(`Next: git add -A && git commit -m "v${next}" && git tag v${next} && git push && git push origin v${next}`);
+console.log(`      (the v${next} tag MUST be pushed — the jsDelivr @require pins point at it)`);

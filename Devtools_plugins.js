@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Plugin Registry
 // @namespace    http://tampermonkey.net/
-// @version      3.6.3
+// @version      3.6.4
 // @description  Lightweight plugin registry for DevTools Sidebar. Must be @required before any plugin script and before the main DevTools Sidebar script.
 // @author       MrNosferatu
 // ==/UserScript==
