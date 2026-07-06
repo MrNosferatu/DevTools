@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Network Monitor Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.2
+// @version      3.6.3
 // @description  Network Monitor plugin for DevTools Sidebar — a simple persistent network log with regex/search filtering and literal cURL export.
 // @author       MrNosferatu
 // ==/UserScript==

@@ -1,14 +1,20 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.6.2
+// @version      3.6.3
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
 
 // ─── CSS ─────────────────────────────────────────────────────────────────────
 const CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@300;400;500&display=swap');
+  /* NOTE: no @import here — the IBM Plex fonts are loaded by injectFonts() in
+     Devtools.js as a document-level <link>. An @import at the top of this
+     sheet made engines treat the WHOLE sheet as pending until the network
+     fetch resolved, so on a cold cache the sidebar painted as a raw unstyled
+     skeleton (the reveal fired before any rule applied). @font-face inside a
+     shadow tree also doesn't register fonts in Chromium — they must be
+     declared at document level to be usable in here at all. */
 
   /* Shadow-DOM host. The whole UI lives in a shadow root, so page CSS can't
      reach it at all (not even with !important) — except INHERITED properties
