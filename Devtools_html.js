@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — HTML
 // @namespace    http://tampermonkey.net/
-// @version      3.6.1
+// @version      3.6.2
 // @description  HTML template builders for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==

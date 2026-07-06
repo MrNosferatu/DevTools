@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.1
+// @version      3.6.2
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -2692,7 +2692,8 @@
   }
 
   // ─── Patch fetch (robust with re-patching) ────────────────────────────────────
-  let _fetch = null;
+  let _fetch = null;       // what the outermost patch forwards to (may be a later site wrapper)
+  let _nativeFetch = null; // the true native fetch, captured once at the FIRST patch and never replaced
   function setupFetchPatch() {
     if (!realWindow.fetch) return; // fetch not available yet
     // Already our patched fetch — nothing to do. Re-wrapping fetch every tick
@@ -2706,10 +2707,26 @@
     // Bind to the real window: _fetch is called detached (`_fetch(url)`), and an
     // unbound native fetch throws "TypeError: Illegal invocation" in some browsers.
     if (!_fetch || !realWindow.fetch._dt_patched) _fetch = realWindow.fetch.bind(realWindow);
+    if (!_nativeFetch) _nativeFetch = _fetch;
     try {
       const patchedFetch = async function(input, init = {}) {
           const reqStart = performance.now();
           const isReqObj = input instanceof realWindow.Request;
+          // Re-entrancy guard. Many sites wrap window.fetch AFTER we've patched
+          // it (Sentry, Next.js dev, analytics SDKs); the re-patch tick below
+          // then layers a fresh patch on top of their wrapper, so one page
+          // request flows through TWO patched layers. Without this, every
+          // intercepted request popped its modal twice — after "Send" the same
+          // request immediately re-appeared, and aborting that phantom second
+          // modal surfaced to the page as a fake network error (AbortError).
+          // The outermost layer marks whatever it forwards (see below); inner
+          // layers see the mark and pass straight through — to the NATIVE
+          // fetch, not _fetch: after a re-patch, _fetch points at the site
+          // wrapper that sits in front of this very layer, so forwarding there
+          // would recurse forever.
+          if ((init && init.__dt_seen) || (isReqObj && input.__dt_seen)) {
+            return (_nativeFetch || _fetch)(input, isReqObj ? undefined : init);
+          }
           const url = typeof input === 'string' ? input : (input?.url || '');
           const method = ((init.method || (isReqObj ? input.method : 'GET')) || 'GET').toUpperCase();
           let actualUrl = url, actualInit = init, intercepted = false;
@@ -2786,9 +2803,22 @@
             rawInput = actualUrl;
             fetchInit = actualInit;
           }
+          // Mark the forwarded request so an inner patched layer (if a site
+          // wrapper sandwiched one — see the re-entrancy guard above) passes it
+          // through untouched instead of intercepting/capturing it again.
+          try {
+            if (rawInput instanceof realWindow.Request) rawInput.__dt_seen = true;
+            else fetchInit = { ...(fetchInit || {}), __dt_seen: true };
+          } catch {}
           const response = await _fetch(rawInput, fetchInit);
+          // Streaming responses (SSE — chat UIs like claude.ai/ChatGPT stream
+          // everything this way) must NEVER be cloned/read/held: clone().text()
+          // buffers the stream and only resolves when it ENDS (never, for
+          // keep-alive streams), so capturing froze the page and intercepting
+          // hung it outright. Pass them through untouched.
+          const isEventStream = ((response.headers.get('content-type') || '').toLowerCase()).includes('text/event-stream');
           // Plugin capture (Bench, Recorder, Monitor, ...) — extract request headers properly
-          const capturingPlugins = plugins.filter(p => p.wantsCapture && p.wantsCapture(url, method));
+          const capturingPlugins = isEventStream ? [] : plugins.filter(p => p.wantsCapture && p.wantsCapture(url, method));
           if (capturingPlugins.length) {
             const capHeaders = {};
             if (actualInit.headers instanceof realWindow.Headers) actualInit.headers.forEach((v,k)=>capHeaders[k]=v);
@@ -2809,7 +2839,7 @@
               }
             })();
           }
-          if (shouldInterceptRes(url, method)) {
+          if (!isEventStream && shouldInterceptRes(url, method)) {
             const resHeaders = {}; response.headers.forEach((v, k) => resHeaders[k] = v);
             let resBody = ''; try { resBody = await response.clone().text(); } catch {}
             const editedBody = await queueRes(url, method, response.status, response.statusText, resHeaders, resBody);
@@ -3007,7 +3037,10 @@
     $1: (sel) => (dtRoot ? dtRoot.querySelector(sel) : null),
     root: () => rootMount(),
     escHtml, schemaBlock, tip, icon, METHOD_COLORS, ALL_METHODS, BASEURL_COLORS, getGroupHosts,
-    getFetch: () => _fetch,
+    // Plugins (e.g. Bench) want a RAW fetch that bypasses interception — hand
+    // them the true native one, not _fetch, which after a site re-wrap can
+    // point back INTO the patched chain.
+    getFetch: () => _nativeFetch || _fetch,
     updatePostmanKeyWarning,
     notifyPluginsBaseUrlGroupsChanged,
   };
