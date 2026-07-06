@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.5.2
+// @version      3.6.0
 // @description  Some tools for web development — request/response interceptor, editor, recorder, and more.
 // @author       MrNosferatu
 // @match        http://*/*

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — HTML
 // @namespace    http://tampermonkey.net/
-// @version      3.5.2
+// @version      3.6.0
 // @description  HTML template builders for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -102,6 +102,22 @@ function buildNetworkPanel() {
       <div class="dt-row" id="dt-req-persist-row" style="margin-top:12px;margin-bottom:0">
         <div class="dt-row-label">Persist ${tip('Keep intercept enabled across page reloads.')}</div>
         <label class="dt-toggle"><input type="checkbox" id="dt-req-persist"><div class="dt-toggle-track"><div class="dt-toggle-thumb"></div></div></label>
+      </div>
+      <div class="dt-disclosure" id="dt-req-mock-disc">
+        <button class="dt-disclosure-hd" data-disc="req-mock" type="button">
+          <span class="dt-disclosure-arrow">${icon('chevronRight',13,2.2)}</span>
+          <span>Mock failure</span>
+          <span class="dt-disclosure-hint" id="dt-req-mock-hint"></span>
+        </button>
+        <div class="dt-disclosure-body">
+          <div class="dt-note dt-note-tight" style="margin-top:0">The intercept modal's <em>Mock Fail</em> button answers the request with this response instead of sending it. The body can be overridden per group or per URL in the Environments tab.</div>
+          <div class="dt-row" style="margin:12px 0 10px">
+            <div class="dt-row-label">Status code</div>
+            <input class="dt-mock-status-input" id="dt-req-mock-status" type="text" inputmode="numeric" maxlength="3" spellcheck="false">
+          </div>
+          <div class="dt-flabel" style="margin-bottom:5px">Default response body</div>
+          <textarea class="dt-mock-body-ed" id="dt-req-mock-body" spellcheck="false" placeholder='{"success":false,"error":"Request failed (mocked by DevTools)"}'></textarea>
+        </div>
       </div>
     </div>
 
@@ -338,7 +354,7 @@ const HTML = `
       <!--dt-panel-plugins-->
       <div class="dt-panel" id="dt-panel-settings">${buildSidebarSettingsPanel()}</div>
       <div class="dt-panel" id="dt-panel-about">
-        <div class="dt-about-hero"><div class="dt-about-icon">${icon('tool',26,1.7)}</div><div class="dt-about-title">DevTools Sidebar</div><div class="dt-about-version">v10.1.0 · Tampermonkey</div></div>
+        <div class="dt-about-hero"><div class="dt-about-icon">${icon('tool',26,1.7)}</div><div class="dt-about-title">DevTools Sidebar</div><div class="dt-about-version">v${DT_VERSION} · Tampermonkey</div></div>
         <div class="dt-feature-list">
           <div class="dt-feature-item"><div class="dt-feature-ico">${icon('zap',16,1.8)}</div><div><div class="dt-feature-name">Request Interceptor</div><div class="dt-feature-desc">Edit request body or URL params before sending. Supports GET/POST/PUT/PATCH/DELETE.</div></div></div>
           <div class="dt-feature-item"><div class="dt-feature-ico">${icon('reply',16,1.8)}</div><div><div class="dt-feature-name">Response Interceptor</div><div class="dt-feature-desc">Capture & transform responses. Manual edit, GUI path extractor, or custom JS transform.</div></div></div>
@@ -395,6 +411,7 @@ const HTML = `
       </div>
       <div class="dt-modal-foot">
         <button class="dt-foot-btn dt-foot-btn-abort" id="dt-req-abort">Abort</button>
+        <button class="dt-foot-btn dt-foot-btn-mock" id="dt-req-mock" title="Don't send — answer with the configured mock failure response">Mock Fail</button>
         <button class="dt-foot-btn dt-foot-btn-skip" id="dt-req-skip" title="Pass through this request unmodified">Skip</button>
         <button class="dt-foot-btn dt-foot-btn-skip-all" id="dt-req-skip-all" title="Disable intercept and pass through all future requests">Skip All</button>
         <button class="dt-qnav" id="dt-req-prev" title="Previous queued request" style="display:none">${icon('chevronLeft',13,2.2)}</button>
@@ -503,7 +520,7 @@ const HTML = `
       <div class="dt-modal-foot">
         <button class="dt-foot-btn dt-foot-btn-abort" id="dt-res-abort">Passthrough (Original)</button>
         <span class="dt-modal-count" id="dt-res-count"></span>
-        <button class="dt-foot-btn dt-foot-btn-send res-send" id="dt-res-send"><span>Apply Response</span>${icon('arrowRight',14,2)}</button>
+        <button class="dt-foot-btn dt-foot-btn-send" id="dt-res-send"><span>Apply Response</span>${icon('arrowRight',14,2)}</button>
       </div>
     </div>
   </div>

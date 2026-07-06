@@ -18,6 +18,9 @@ import { fileURLToPath } from 'node:url';
 const dir = dirname(fileURLToPath(import.meta.url));
 const ENTRY = 'Devtools.user.js';
 const VERSION_RE = /(\/\/\s*@version\s+)(\d+)\.(\d+)\.(\d+)/;
+// Runtime copy of the version (Devtools_constants.js) — shown in the About
+// panel, kept in lockstep with the @version headers.
+const DT_VERSION_RE = /(const DT_VERSION = ')(\d+\.\d+\.\d+)(')/;
 
 const files = readdirSync(dir).filter(f => f.endsWith('.js') || f === ENTRY);
 const entryPath = join(dir, ENTRY);
@@ -41,7 +44,9 @@ for (const f of files) {
   const p = join(dir, f);
   const src = readFileSync(p, 'utf8');
   if (!VERSION_RE.test(src)) continue;
-  const out = src.replace(VERSION_RE, (_all, lead) => `${lead}${next}`);
+  const out = src
+    .replace(VERSION_RE, (_all, lead) => `${lead}${next}`)
+    .replace(DT_VERSION_RE, (_all, lead, _v, trail) => `${lead}${next}${trail}`);
   if (out !== src) { writeFileSync(p, out); changed++; }
 }
 

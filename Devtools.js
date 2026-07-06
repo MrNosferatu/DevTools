@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.5.2
+// @version      3.6.0
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -76,6 +76,11 @@
       mode:     Store.get('req.mode', 'auto'),
       urlRegex: Store.get('req.urlRegex', ''),
       methods:  Store.get('req.methods', ['POST','PUT','PATCH']),
+      // "Mock Fail" (request modal): status + default body of the fabricated
+      // failure response. Empty body = built-in fallback; the body can also be
+      // overridden per Base URL group / URL entry (see resolveMockFailure).
+      mockStatus: Store.get('req.mockStatus', 500),
+      mockBody:   Store.get('req.mockBody', ''),
     },
     res: {
       enabled:       Store.get('res.enabled', false),
@@ -143,6 +148,8 @@
     'req.mode':     () => { state.req.mode = Store.get('req.mode', 'auto'); syncNetworkPanel(); },
     'req.urlRegex': () => { state.req.urlRegex = Store.get('req.urlRegex', ''); syncNetworkPanel(); },
     'req.methods':  () => { state.req.methods = Store.get('req.methods', ['POST','PUT','PATCH']); syncNetworkPanel(); },
+    'req.mockStatus': () => { state.req.mockStatus = Store.get('req.mockStatus', 500); syncNetworkPanel(); },
+    'req.mockBody':   () => { state.req.mockBody = Store.get('req.mockBody', ''); syncNetworkPanel(); },
 
     'res.enabled':  () => { state.res.enabled = Store.get('res.enabled', false); syncNetworkPanel(); },
     'res.persist':  () => { state.res.persist = Store.get('res.persist', false); syncNetworkPanel(); },
@@ -1061,6 +1068,17 @@
       if (gearBtn) gearBtn.classList.toggle('active', panelName === 'settings');
     }
     $$('.dt-nav-btn').forEach(btn => btn.addEventListener('click', () => switchToPanel(btn.dataset.panel)));
+    // The nav overflows horizontally once plugins add their tabs, but a mouse
+    // wheel over it only jiggled the strip vertically (see the .dt-nav
+    // overflow-y note in the CSS) — translate vertical wheel motion into a
+    // horizontal slide. Trackpad horizontal pans (deltaX) keep native behavior.
+    const navStrip = $1('.dt-nav');
+    if (navStrip) navStrip.addEventListener('wheel', e => {
+      if (navStrip.scrollWidth <= navStrip.clientWidth) return;
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      e.preventDefault();
+      navStrip.scrollLeft += e.deltaY;
+    }, { passive: false });
     const settingsBtn = $('dt-settings-btn');
     if (settingsBtn) settingsBtn.addEventListener('click', () => switchToPanel('settings'));
     // The About panel has no nav button — previously it was dead, unreachable
@@ -1097,6 +1115,21 @@
       Store.set('req.persist', state.req.persist);
       if (state.req.persist) Store.set('req.enabled', state.req.enabled);
       syncNetworkPanel();
+    });
+
+    // ── Mock failure response (drives the request modal's "Mock Fail") ────────
+    const mockStatusIn = $('dt-req-mock-status');
+    if (mockStatusIn) mockStatusIn.addEventListener('input', e => {
+      const n = parseInt(e.target.value, 10);
+      state.req.mockStatus = (n >= 100 && n <= 599) ? n : 500;
+      Store.setSoon('req.mockStatus', state.req.mockStatus);
+      updateMockFailureHint();
+    });
+    const mockBodyIn = $('dt-req-mock-body');
+    if (mockBodyIn) mockBodyIn.addEventListener('input', e => {
+      state.req.mockBody = e.target.value;
+      Store.setSoon('req.mockBody', state.req.mockBody);
+      updateMockFailureHint();
     });
 
     // ── Response interceptor enable/persist ───────────────────────────────────
@@ -1441,6 +1474,11 @@
     const rp=$('dt-req-persist'); if(rp) rp.checked=state.req.persist;
     const reqPersistRow=$('dt-req-persist-row');
     if(reqPersistRow) reqPersistRow.classList.toggle('dt-row-disabled', !state.req.enabled);
+    // Mock failure config — don't stomp the caret while the user is typing here
+    // (this also runs on cross-tab sync); same guard as the regex fields.
+    const ms=$('dt-req-mock-status'); if(ms && dtRoot.activeElement!==ms) ms.value=state.req.mockStatus;
+    const mb=$('dt-req-mock-body'); if(mb && dtRoot.activeElement!==mb) mb.value=state.req.mockBody||'';
+    updateMockFailureHint();
     updateQueueUI('req');
     const se=$('dt-res-enabled'); if(se) se.checked=state.res.enabled;
     const sp=$('dt-res-persist'); if(sp) sp.checked=state.res.persist;
@@ -2072,6 +2110,22 @@
       () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);const editedHeaders=collectHeaders('dt-req-hinner');if(isGET)req.resolve({editedUrl:buildEditedUrl(req.url,'dt-req-params-list'),editedHeaders});else{recordEditFromModal('req',req.url,req.method,req.body,$('dt-req-ed').value);req.resolve({editedBody:$('dt-req-ed').value,editedHeaders});}showNextModal(); },
       () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);req.reject(new DOMException('Aborted by DevTools','AbortError'));showNextModal(); }
     );
+    // Mock Fail — never send the request; answer it with the configured mock
+    // failure response instead (fetch/XHR paths fabricate the response from
+    // result.mock). Resolved per-URL so Environments overrides apply.
+    const mockFailBtn = $('dt-req-mock');
+    if (mockFailBtn) {
+      const newMockFail = mockFailBtn.cloneNode(true);
+      mockFailBtn.replaceWith(newMockFail);
+      const mock = resolveMockFailure(req.url);
+      newMockFail.title = `Don't send — answer with a mocked ${mock.status} ${mock.statusText} response`;
+      newMockFail.addEventListener('click', () => {
+        ov.classList.remove('visible');
+        removeFromQueue('pendingReqs', req);
+        req.resolve({ mock });
+        showNextModal();
+      });
+    }
     // Skip — pass original through unmodified
     const skipBtn = $('dt-req-skip');
     if (skipBtn) {
@@ -2570,6 +2624,45 @@
   }
 
   function queueReq(url,method,headers,body){return new Promise((resolve,reject)=>{const req={url,method,headers,body,resolve,reject};state.pendingReqs.push(req);updateQueueUI('req');showNextModal();});}
+
+  // ─── Mock failure response ("Mock Fail" in the request modal) ─────────────────
+  // Instead of terminating an intercepted request (Abort → the page sees a
+  // network error), Mock Fail answers it with a fabricated failure response.
+  // Body resolution, most specific first: matching Base URL entry override →
+  // that entry's group override → the global default from the Network panel →
+  // built-in fallback. An entry matches when its host equals the request's host.
+  const MOCK_FAIL_FALLBACK_BODY = '{"success":false,"error":"Request failed (mocked by DevTools)"}';
+  const MOCK_STATUS_TEXT = {400:'Bad Request',401:'Unauthorized',403:'Forbidden',404:'Not Found',408:'Request Timeout',409:'Conflict',422:'Unprocessable Entity',429:'Too Many Requests',500:'Internal Server Error',502:'Bad Gateway',503:'Service Unavailable',504:'Gateway Timeout'};
+  function mockFailStatus() {
+    const n = parseInt(state.req.mockStatus, 10);
+    return (n >= 100 && n <= 599) ? n : 500;
+  }
+  function resolveMockFailure(url) {
+    const status = mockFailStatus();
+    let body = '';
+    try {
+      const host = new URL(url, location.href).host;
+      outer:
+      for (const g of ((state.baseUrl && state.baseUrl.groups) || [])) {
+        if (g.enabled === false) continue;
+        for (const e of (g.entries || [])) {
+          if (!e.url) continue;
+          let h; try { h = new URL(e.url.includes('://') ? e.url : 'http://' + e.url).host; } catch { continue; }
+          if (h !== host) continue;
+          const entryBody = (e.mockBody || '').trim();
+          if (entryBody) { body = entryBody; break outer; }
+          const groupBody = (g.mockBody || '').trim();
+          if (groupBody) { body = groupBody; break outer; }
+        }
+      }
+    } catch {}
+    if (!body) body = (state.req.mockBody || '').trim() || MOCK_FAIL_FALLBACK_BODY;
+    return { status, statusText: MOCK_STATUS_TEXT[status] || 'Error', body, headers: { 'content-type': 'application/json' } };
+  }
+  function updateMockFailureHint() {
+    const el = $('dt-req-mock-hint'); if (!el) return;
+    el.textContent = `${mockFailStatus()} · ${(state.req.mockBody || '').trim() ? 'custom body' : 'default body'}`;
+  }
   function tryAutoTransform(url, body) {
     if (!state.res.autoTransform) return null;
     const active = state.resPresets.filter(p => p.enabled !== false);
@@ -2631,6 +2724,23 @@
             else if (init.headers) headers = { ...init.headers };
             else if (isReqObj) input.headers.forEach((v, k) => headers[k] = v);
             const result = await queueReq(url, method, headers, body || '');
+            // "Mock Fail": the request is never sent — the page receives this
+            // fabricated failure response instead (and it deliberately skips
+            // response interception: the user already chose the final body).
+            if (result.mock) {
+              const m = result.mock;
+              // Still fan out to capture plugins (Monitor, ...) so the mocked
+              // exchange shows up in the log even though nothing hit the wire —
+              // the XHR path gets this for free from its synthetic events.
+              const mockDuration = Math.round(performance.now() - reqStart);
+              plugins.forEach(p => {
+                if (p.wantsCapture && p.onResponseCapture && p.wantsCapture(url, method)) {
+                  try { p.onResponseCapture(url, method, headers, typeof body === 'string' ? body : '', m.status, m.statusText, m.headers, m.body, mockDuration); }
+                  catch (e) { console.warn('[DevTools] plugin capture failed:', e); }
+                }
+              });
+              return new realWindow.Response(m.body, { status: m.status, statusText: m.statusText, headers: m.headers });
+            }
             // result.editedHeaders MUST be applied here — previously both
             // branches rebuilt actualInit without them, so header edits made
             // in the intercept modal were silently discarded.
@@ -2787,7 +2897,7 @@
         const rh={};
         self.getAllResponseHeaders().split('\r\n').forEach(line=>{const idx=line.indexOf(':');if(idx>0)rh[line.slice(0,idx).trim()]=line.slice(idx+1).trim();});
 
-        queueRes(url,method,self.status,self.statusText,rh,self.responseText).then(editedBody=>{
+        const finish=editedBody=>{
           // Patch the body
           try{Object.defineProperty(self,'responseText',{get:()=>editedBody,configurable:true,enumerable:true});}catch{}
           try{Object.defineProperty(self,'response',{get:()=>editedBody,configurable:true,enumerable:true});}catch{}
@@ -2816,7 +2926,12 @@
             });
           }
           self._dt_held_listeners={};
-        });
+        };
+        // A "Mock Fail" answer already IS the final body the user chose —
+        // release the held handlers with it directly instead of opening the
+        // response intercept modal for our own fabricated response.
+        if(self._dt_skip_res_intercept){finish(self.responseText);return;}
+        queueRes(url,method,self.status,self.statusText,rh,self.responseText).then(finish);
       });
     }
 
@@ -2829,6 +2944,8 @@
   };
   function doXHR(xhr,bodyText,method,savedHeaders){
     queueReq(xhr._dt_url,method,savedHeaders,bodyText).then(result=>{
+      // "Mock Fail": never send — fabricate a completed failure response.
+      if(result.mock){mockXHRResponse(xhr,result.mock);return;}
       // Headers on an already-opened XHR can't be replaced — if the user edited
       // them in the modal, re-open the request and set the edited set instead.
       // (Previously editedHeaders were ignored entirely on the XHR path.)
@@ -2846,6 +2963,29 @@
         _send.call(xhr,result.editedBody??bodyText);
       }
     }).catch(()=>xhr.dispatchEvent(new ProgressEvent('abort')));
+  }
+  // Fabricates a completed failed response on an XHR that was never actually
+  // sent ("Mock Fail"). dispatchEvent also invokes on* property handlers, so
+  // pages using either registration style see a normal completion sequence —
+  // and the plugin-capture readystatechange listener fires too, so the mocked
+  // exchange still shows up in the Network Monitor.
+  function mockXHRResponse(xhr, mock) {
+    xhr._dt_skip_res_intercept = true; // don't re-open the response modal for our own mock
+    const headerStr = Object.entries(mock.headers || {}).map(([k, v]) => `${k}: ${v}`).join('\r\n');
+    const def = (prop, val) => { try { Object.defineProperty(xhr, prop, { get: () => val, configurable: true, enumerable: true }); } catch {} };
+    let resVal = mock.body;
+    if (xhr.responseType === 'json') { try { resVal = JSON.parse(mock.body); } catch { resVal = null; } }
+    def('readyState', 4);
+    def('status', mock.status);
+    def('statusText', mock.statusText);
+    def('responseText', mock.body);
+    def('response', resVal);
+    def('responseURL', xhr._dt_url || '');
+    try { xhr.getAllResponseHeaders = () => headerStr; } catch {}
+    try { xhr.getResponseHeader = k => { const v = (mock.headers || {})[String(k).toLowerCase()]; return v == null ? null : v; }; } catch {}
+    xhr.dispatchEvent(new Event('readystatechange'));
+    xhr.dispatchEvent(new ProgressEvent('load'));
+    xhr.dispatchEvent(new ProgressEvent('loadend'));
   }
 
   const METHOD_COLORS = { GET:'#0891b2', POST:'#16a34a', PUT:'#2563eb', PATCH:'#7c3aed', DELETE:'#dc2626' };

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Base URL Switcher Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.5.2
+// @version      3.6.0
 // @description  Base URL Switcher plugin for DevTools Sidebar — a floating button for swapping between configured environments (prod/staging/...) on matching pages.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -119,6 +119,10 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
             <span class="dt-baseurl-match-label" style="flex-shrink:0">API prefix</span>
             <input class="dt-baseurl-entry-url" id="dt-bug-prefix-${gi}" placeholder="optional, e.g. /api" value="${escHtml(group.apiPrefix||'')}" spellcheck="false" autocomplete="off" style="flex:1">
           </div>
+          <div class="dt-baseurl-match-row" style="align-items:flex-start">
+            <span class="dt-baseurl-match-label" style="flex-shrink:0;margin-top:6px">Mock body</span>
+            <textarea class="dt-baseurl-mock-input" id="dt-bug-mock-${gi}" placeholder="optional — overrides the default Mock Fail response body for this group" spellcheck="false" style="flex:1">${escHtml(group.mockBody||'')}</textarea>
+          </div>
           <div id="dt-bug-entries-${gi}"></div>
         </div>
         <div class="dt-baseurl-group-foot">
@@ -139,6 +143,14 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
       // assets, app build manifests, etc) don't get pulled into the docs.
       el.querySelector(`#dt-bug-prefix-${gi}`).addEventListener('input', e => {
         state.baseUrl.groups[gi].apiPrefix = e.target.value.trim();
+        saveGroupsSoon();
+      });
+      // Group-level Mock Fail body override — used by the request intercept
+      // modal's "Mock Fail" for URLs whose host matches one of this group's
+      // entries (an entry-level override wins over this; see resolveMockFailure
+      // in the core script).
+      el.querySelector(`#dt-bug-mock-${gi}`).addEventListener('input', e => {
+        state.baseUrl.groups[gi].mockBody = e.target.value;
         saveGroupsSoon();
       });
       // Enabled toggle
@@ -201,6 +213,7 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
         <div class="dt-baseurl-entry-color" id="dt-bue-color-${gi}-${ei}" style="background:${escHtml(entry.color)}" title="Pick color"></div>
         <input class="dt-baseurl-entry-label-input" placeholder="Label" value="${escHtml(entry.label||'')}" spellcheck="false">
         <input class="dt-baseurl-entry-url" placeholder="https://..." value="${escHtml(entry.url||'')}" spellcheck="false">
+        <button class="dt-baseurl-entry-mock${(entry.mockBody||'').trim()?' has-mock':''}" title="Mock Fail body override for this URL">5xx</button>
         <button class="dt-baseurl-entry-del" title="Remove">
           <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.7"><line x1="1" y1="1" x2="8" y2="8"/><line x1="8" y1="1" x2="1" y2="8"/></svg>
         </button>
@@ -244,6 +257,22 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
         checkBaseUrlFab();
       });
       cont.appendChild(row);
+      // Per-URL Mock Fail body override — most specific level; wins over the
+      // group override and the global default. Hidden behind the "5xx" toggle
+      // so the entry row stays compact.
+      const mockWrap = document.createElement('div');
+      mockWrap.className = 'dt-baseurl-entry-mock-wrap';
+      mockWrap.innerHTML = `<textarea class="dt-baseurl-mock-input" placeholder="optional — overrides the group/default Mock Fail body for this URL" spellcheck="false"></textarea>`;
+      const mockTa = mockWrap.querySelector('textarea');
+      mockTa.value = entry.mockBody || '';
+      const mockBtn = row.querySelector('.dt-baseurl-entry-mock');
+      mockBtn.addEventListener('click', () => mockWrap.classList.toggle('open'));
+      mockTa.addEventListener('input', e => {
+        state.baseUrl.groups[gi].entries[ei].mockBody = e.target.value;
+        mockBtn.classList.toggle('has-mock', !!e.target.value.trim());
+        saveGroupsSoon();
+      });
+      cont.appendChild(mockWrap);
     });
     Store.set('baseurl.groups', state.baseUrl.groups); // persist any color defaults just assigned
     if (!renderBaseUrlEntries._closerBound) {
