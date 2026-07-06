@@ -58,5 +58,6 @@ for (const f of files) {
 }
 
 console.log(`Version ${maj}.${min}.${pat} -> ${next}  (${changed} file${changed === 1 ? '' : 's'} updated)`);
-console.log(`Next: git add -A && git commit -m "v${next}" && git tag v${next} && git push && git push origin v${next}`);
-console.log(`      (the v${next} tag MUST be pushed — the jsDelivr @require pins point at it)`);
+console.log(`Next: git add -A && git commit -m "v${next}" && git push`);
+console.log(`      (CI tags v${next} automatically on push to main — the jsDelivr @require pins need that tag;`);
+console.log(`       if Actions is disabled: git tag v${next} && git push origin v${next})`);
