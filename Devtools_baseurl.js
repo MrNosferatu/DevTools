@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Base URL Switcher Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.0
+// @version      3.6.1
 // @description  Base URL Switcher plugin for DevTools Sidebar — a floating button for swapping between configured environments (prod/staging/...) on matching pages.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -13,7 +13,7 @@
 // any plugin factory runs — a plugin can't hand a function to ctx in time for
 // other plugins in the same registration pass to use it.
 DT_registerPlugin(function createBaseUrlPlugin(ctx) {
-  const { Store, state, $, $$, escHtml, BASEURL_COLORS, getGroupHosts } = ctx;
+  const { Store, state, $, $$, $1, escHtml, BASEURL_COLORS, getGroupHosts } = ctx;
 
   // ─── Base URL Switcher panel HTML ─────────────────────────────────────────────
   function buildBaseUrlPanel() {
@@ -205,8 +205,9 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
     const cont = $(`dt-bug-entries-${gi}`);
     if (!cont) return;
     cont.innerHTML = '';
+    let colorAssigned = false;
     group.entries.forEach((entry, ei) => {
-      if (!entry.color) entry.color = BASEURL_COLORS[ei % BASEURL_COLORS.length];
+      if (!entry.color) { entry.color = BASEURL_COLORS[ei % BASEURL_COLORS.length]; colorAssigned = true; }
       const row = document.createElement('div');
       row.className = 'dt-baseurl-entry';
       row.innerHTML = `
@@ -274,7 +275,15 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
       });
       cont.appendChild(mockWrap);
     });
-    Store.set('baseurl.groups', state.baseUrl.groups); // persist any color defaults just assigned
+    // Persist ONLY when a missing color default was actually assigned. This
+    // write used to run unconditionally on every render — and the cross-tab
+    // sync handler for 'baseurl.groups' re-renders on every remote change, so
+    // any edit in one tab made every other tab (the script runs on ALL sites)
+    // re-render AND write the value straight back, re-triggering everyone in an
+    // infinite ping-pong. With 2+ tabs open, one keystroke in any Environments
+    // field stormed thousands of synchronous GM writes per second across all
+    // tabs and froze the whole browser.
+    if (colorAssigned) Store.set('baseurl.groups', state.baseUrl.groups);
     if (!renderBaseUrlEntries._closerBound) {
       renderBaseUrlEntries._closerBound = true;
       document.addEventListener('click', () => {
@@ -415,7 +424,16 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
     'baseurl.enabled': () => { state.baseUrl.enabled = Store.get('baseurl.enabled', false); checkBaseUrlFab(); },
     'baseurl.groups':  () => {
       state.baseUrl.groups = Store.get('baseurl.groups', []);
-      renderBaseUrlGroups(); checkBaseUrlFab();
+      // Don't rebuild the panel underneath an actively-focused groups field —
+      // the innerHTML swap would destroy the input the user is typing into
+      // (dead keystrokes, just a blinking caret) whenever another tab saves.
+      // The in-memory state is updated either way; input handlers look up
+      // state.baseUrl.groups[gi] at event time, so edits keep landing in the
+      // fresh array and the panel repaints on the next non-focused sync.
+      const list = $('dt-baseurl-groups-list');
+      const focused = $1 ? $1(':focus') : null;
+      if (!(list && focused && list.contains(focused))) renderBaseUrlGroups();
+      checkBaseUrlFab();
       ctx.notifyPluginsBaseUrlGroupsChanged(); // e.g. recorder targets/labels are derived from groups
     },
   };
