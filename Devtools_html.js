@@ -354,7 +354,7 @@ const HTML = `
       <!--dt-panel-plugins-->
       <div class="dt-panel" id="dt-panel-settings">${buildSidebarSettingsPanel()}</div>
       <div class="dt-panel" id="dt-panel-about">
-        <div class="dt-about-hero"><div class="dt-about-icon">${icon('tool',26,1.7)}</div><div class="dt-about-title">DevTools Sidebar</div><div class="dt-about-version">v10.1.0 · Tampermonkey</div></div>
+        <div class="dt-about-hero"><div class="dt-about-icon">${icon('tool',26,1.7)}</div><div class="dt-about-title">DevTools Sidebar</div><div class="dt-about-version">v${DT_VERSION} · Tampermonkey</div></div>
         <div class="dt-feature-list">
           <div class="dt-feature-item"><div class="dt-feature-ico">${icon('zap',16,1.8)}</div><div><div class="dt-feature-name">Request Interceptor</div><div class="dt-feature-desc">Edit request body or URL params before sending. Supports GET/POST/PUT/PATCH/DELETE.</div></div></div>
           <div class="dt-feature-item"><div class="dt-feature-ico">${icon('reply',16,1.8)}</div><div><div class="dt-feature-name">Response Interceptor</div><div class="dt-feature-desc">Capture & transform responses. Manual edit, GUI path extractor, or custom JS transform.</div></div></div>

@@ -6,6 +6,11 @@
 // @author       MrNosferatu
 // ==/UserScript==
 
+// Single runtime-readable copy of the script version (shown in the About
+// panel). bump-version.mjs rewrites this line together with every @version
+// header, so it can never drift from the release version again.
+const DT_VERSION = '3.6.0';
+
 const ALL_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 
 const BASEURL_COLORS = ['#2563eb','#16a34a','#dc2626','#d97706','#7c3aed','#0891b2','#db2777','#65a30d'];
