@@ -1,0 +1,45 @@
+# Auto-tag releases. The jsDelivr @require pins in Devtools.user.js point at
+# cdn.jsdelivr.net/gh/<user>/<repo>@vX.Y.Z/<file>, and jsDelivr resolves
+# version-shaped refs against GIT TAGS — so every released version needs a
+# matching vX.Y.Z tag on GitHub or fresh installs/updates 404 their
+# dependencies. This workflow creates that tag automatically whenever main's
+# @version changes, so the release loop is just: bump, commit, push.
+name: Tag release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create vX.Y.Z tag for the current @version (if missing)
+        run: |
+          set -euo pipefail
+          v=$(grep -m1 -oE '@version[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' Devtools.user.js | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          echo "Entry @version: $v"
+          # A same-named BRANCH shadows nothing on jsDelivr (it resolves
+          # version-shaped refs from tags only) but makes git refs ambiguous —
+          # remove it if one exists (e.g. a stand-in created before this
+          # workflow existed).
+          if git ls-remote --exit-code --heads origin "v$v" >/dev/null 2>&1; then
+            echo "Deleting stray branch v$v"
+            git push origin --delete "v$v"
+          fi
+          if git ls-remote --exit-code --tags origin "v$v" >/dev/null 2>&1; then
+            echo "Tag v$v already exists — nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "v$v"
+          git push origin "v$v"
+          echo "Tagged v$v"

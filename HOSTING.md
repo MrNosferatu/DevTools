@@ -50,20 +50,24 @@ in a browser with Tampermonkey → it offers to install. Done.
 ```bash
 # edit any file(s) …
 node bump-version.mjs            # patch bump; or: minor | major | 3.4.0
-git add -A && git commit -m "vX.Y.Z"
-git tag vX.Y.Z
-git push && git push origin vX.Y.Z   # the tag push is REQUIRED — see below
+git add -A && git commit -m "vX.Y.Z" && git push
 ```
 
 Tampermonkey re-checks `@updateURL` on its interval (Dashboard → Settings →
 **Check for updates**, or click **Check for userscript updates** to force it).
 `raw.githubusercontent.com` refreshes within ~5 min of a push.
 
-### Why the tag push is mandatory
-The `@require` lines point at `cdn.jsdelivr.net/gh/<user>/<repo>@vX.Y.Z/…` —
-`bump-version.mjs` rewrites that pin to the new version, so if the matching
-git tag isn't on GitHub, jsDelivr 404s and the new install/update comes up
-with missing dependencies.
+### The vX.Y.Z tag (created automatically)
+The `@require` lines point at `cdn.jsdelivr.net/gh/<user>/<repo>@vX.Y.Z/…`,
+and **jsDelivr resolves version-shaped refs against git TAGS only** — a branch
+named `vX.Y.Z` does not work. Without the tag, jsDelivr 404s and a fresh
+install/update comes up with missing dependencies.
+
+You don't have to push the tag by hand: the `Tag release` GitHub Actions
+workflow (`.github/workflows/tag-release.yml`) runs on every push to `main`,
+reads the entry's `@version`, and creates the matching `vX.Y.Z` tag if it
+doesn't already exist. If you ever disable Actions, push it manually:
+`git tag vX.Y.Z && git push origin vX.Y.Z`.
 
 ### Why the version bump is mandatory
 Tampermonkey **caches `@require` files and only re-downloads them when the main
