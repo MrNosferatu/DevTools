@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.5.2
+// @version      3.6.0
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -401,13 +401,18 @@ const CSS = `
   .dt-modal-foot { padding:12px 18px; border-top:1px solid var(--bd); display:flex; align-items:center; gap:10px; flex-shrink:0; background:var(--sf); }
   .dt-modal-count { font-family:'IBM Plex Mono',monospace; font-size:9.5px; color:var(--mu); white-space:nowrap; }
   .dt-foot-btn { flex:1; padding:9px; font-size:12.5px; font-weight:500; border-radius:8px; cursor:pointer; border:1.5px solid; transition:all .15s; }
-  .dt-foot-btn:hover { border-color:var(--bd2); color:var(--tx); }
+  /* No generic hover color here: it used to set color:var(--tx), which (at equal
+     specificity, declared earlier) leaked into every variant that didn't restate
+     its own color on hover — most visibly turning the solid Send button's white
+     label near-black on light themes. Each variant styles its own hover below. */
+  .dt-foot-btn:hover { border-color:var(--bd2); }
   .dt-foot-btn-abort { background:var(--bg); border-color:var(--bd); color:var(--tx2); }
   .dt-foot-btn-abort:hover { border-color:var(--rd-bd); color:var(--rd); background:var(--rd-bg); }
+  /* Primary action — identical in the request AND response modal. The response
+     modal's Apply used to carry a hardcoded violet (res-send) that didn't match
+     the request modal's accent button on the default theme. */
   .dt-foot-btn-send { background:var(--ac); border-color:var(--ac); color:var(--ac-tx,#fff); }
   .dt-foot-btn-send:hover { filter:brightness(.92); box-shadow:0 4px 12px var(--ring); }
-  .dt-foot-btn-send.res-send { background:var(--vi); border-color:var(--vi); color:var(--vi-tx,#fff); }
-  .dt-foot-btn-send.res-send:hover { filter:brightness(.92); box-shadow:0 4px 12px var(--vi-bd); }
 
   /* Preview */
   .dt-res-preview-section { border-top:1px solid var(--bd); padding-top:12px; margin-top:4px; }
@@ -567,9 +572,21 @@ const CSS = `
 
   /* Skip / Skip-All buttons in req modal footer */
   .dt-foot-btn-skip { background:var(--bg); border-color:var(--am-bd); color:var(--am); flex:0.7; }
-  .dt-foot-btn-skip:hover { background:var(--am-bg); border-color:var(--am); }
+  .dt-foot-btn-skip:hover { background:var(--am-bg); border-color:var(--am); color:var(--am); }
   .dt-foot-btn-skip-all { background:var(--bg); border-color:var(--bd); color:var(--mu); flex:0.7; font-size:11.5px; }
   .dt-foot-btn-skip-all:hover { background:var(--am-bg); border-color:var(--am-bd); color:var(--am); }
+
+  /* Mock Fail button in req modal footer — answers with a mocked failure
+     response instead of sending the request. */
+  .dt-foot-btn-mock { background:var(--bg); border-color:var(--rd-bd); color:var(--rd); flex:0.7; }
+  .dt-foot-btn-mock:hover { background:var(--rd-bg); border-color:var(--rd); color:var(--rd); }
+
+  /* Mock failure response config (Network panel) */
+  .dt-mock-status-input { width:64px; padding:5px 8px; border:1.5px solid var(--bd); border-radius:6px; background:var(--sf); color:var(--tx); font-family:'IBM Plex Mono',monospace; font-size:11.5px; text-align:center; outline:none; transition:border-color .15s; }
+  .dt-mock-status-input:focus { border-color:var(--ac); box-shadow:0 0 0 3px var(--ac-bg); }
+  .dt-mock-body-ed { width:100%; min-height:64px; box-sizing:border-box; padding:8px 10px; border:1.5px solid var(--bd); border-radius:7px; background:var(--sf); color:var(--tx); font-family:'IBM Plex Mono',monospace; font-size:11px; line-height:1.5; outline:none; resize:vertical; transition:border-color .15s; }
+  .dt-mock-body-ed:focus { border-color:var(--ac); box-shadow:0 0 0 3px var(--ac-bg); }
+  .dt-mock-body-ed::placeholder { color:var(--fa); }
 
   /* Duplicate param button */
   .dt-param-dup { width:24px; height:24px; border-radius:5px; cursor:pointer; background:transparent; border:1px solid var(--bd); color:var(--fa); font-size:13px; display:flex; align-items:center; justify-content:center; flex-shrink:0; transition:all .12s; }
@@ -605,6 +622,14 @@ const CSS = `
   .dt-baseurl-group-add-url:hover { background:#dbeafe; }
   .dt-baseurl-match-row { display:flex; align-items:center; gap:6px; }
   .dt-baseurl-match-label { font-size:11px; color:var(--mu); flex-shrink:0; }
+  /* Mock Fail body overrides (group textarea + per-entry toggle button) */
+  .dt-baseurl-mock-input { width:100%; min-height:48px; box-sizing:border-box; padding:6px 8px; border:1px solid var(--bd); border-radius:5px; background:var(--sf); color:var(--tx); font-family:'IBM Plex Mono',monospace; font-size:10.5px; line-height:1.5; outline:none; resize:vertical; transition:border-color .15s; }
+  .dt-baseurl-mock-input:focus { border-color:var(--ac); }
+  .dt-baseurl-mock-input::placeholder { color:var(--fa); }
+  .dt-baseurl-entry-mock { width:26px; height:22px; border:1px solid var(--bd); border-radius:4px; background:transparent; cursor:pointer; color:var(--mu); display:flex; align-items:center; justify-content:center; flex-shrink:0; transition:all .15s; padding:0; font-family:'IBM Plex Mono',monospace; font-size:8.5px; font-weight:700; letter-spacing:.02em; }
+  .dt-baseurl-entry-mock:hover, .dt-baseurl-entry-mock.has-mock { border-color:var(--am-bd); color:var(--am); background:var(--am-bg); }
+  .dt-baseurl-entry-mock-wrap { display:none; margin:0 0 2px 22px; }
+  .dt-baseurl-entry-mock-wrap.open { display:block; }
   .dt-baseurl-color-strip { display:flex; gap:5px; padding:2px 0; }
   .dt-baseurl-entry .dt-baseurl-color-strip { position:absolute; top:26px; left:0; z-index:20; background:var(--bg); border:1px solid var(--bd); border-radius:8px; padding:6px 8px; box-shadow:0 4px 16px rgba(0,0,0,.16); }
   .dt-baseurl-color-dot { width:16px; height:16px; border-radius:50%; cursor:pointer; border:2px solid transparent; transition:all .15s; flex-shrink:0; }
@@ -766,7 +791,11 @@ const CSS = `
   #dt-tab.active #dt-tab-chevron { color:var(--ac); }
 
   /* ── Nav ───────────────────────────────────────────────────────────────── */
-  .dt-nav { padding:0 12px; gap:2px; }
+  /* overflow-y:hidden — the tabs' -1px underline offset makes the strip 1px
+     taller than its box, and with the default overflow that single pixel was
+     wheel-scrollable: the whole tab row visibly nudged up/down instead of
+     sliding sideways. Horizontal wheel-sliding is handled in bindUI(). */
+  .dt-nav { padding:0 12px; gap:2px; overflow-y:hidden; }
   .dt-nav-btn { font-size:12.5px; font-weight:500; padding:11px 10px 10px; border-bottom:2.5px solid transparent; }
 
   /* ── Sections with request/response accent rails ───────────────────────── */
@@ -820,8 +849,7 @@ const CSS = `
   .dt-modal-icon.req { color:var(--am); }
   .dt-modal-icon.res { color:var(--vi); }
   .dt-foot-btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; border-radius:9px; }
-  .dt-foot-btn-send:hover { background:var(--ac); filter:brightness(1.08); border-color:var(--ac); box-shadow:0 4px 14px var(--ring); }
-  .dt-foot-btn-send.res-send:hover { background:var(--vi); filter:brightness(1.08); border-color:var(--vi); box-shadow:0 4px 14px var(--vi-bd); }
+  .dt-foot-btn-send:hover { background:var(--ac); filter:brightness(1.08); border-color:var(--ac); color:var(--ac-tx,#fff); box-shadow:0 4px 14px var(--ring); }
   .dt-preview-arrow { color:var(--mu); }
 
   /* ── Portal tooltip: rendered at <html> level (outside the transformed
