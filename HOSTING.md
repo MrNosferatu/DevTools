@@ -1,8 +1,25 @@
 # Hosting & auto-updating from GitHub (public repo)
 
-The whole point: **stable branch URLs** that never change, so unlike GreasyFork
-(new URL per version) you edit → push → bump, and never touch the `@require`
-lines again.
+The layout: the **entry script** (`Devtools.user.js`) lives at a stable
+`raw.githubusercontent.com/<user>/<repo>/main/...` URL (that's what
+`@updateURL`/`@downloadURL` point at, and what users install), while the ten
+**dependency files** are `@require`d from **jsDelivr** pinned to the release
+tag — `https://cdn.jsdelivr.net/gh/<user>/<repo>@vX.Y.Z/<file>`.
+`bump-version.mjs` rewrites those pins on every bump, so you still never edit
+the `@require` lines by hand.
+
+## Why jsDelivr for the `@require`s (the 429 problem)
+
+`raw.githubusercontent.com` rate-limits unauthenticated requests per IP. A
+Tampermonkey install or update fetches **all ten `@require` files in one
+burst**, which routinely trips that limit — some files come back `429 Too Many
+Requests`, Tampermonkey caches the misses, and the script then runs with
+missing panels/styles until the next successful update. jsDelivr is a CDN
+built specifically to front GitHub files: effectively no rate limit, cached at
+the edge, and — because the pins name an exact release tag — the dependencies
+always match the entry script's `@version` instead of racing a branch update.
+(The entry file itself stays on `raw`: it's a single small fetch, and `raw`
+reflects a push within ~5 min, so update checks stay fast.)
 
 ## 1. Create the repo & push these files
 Put all 11 files (the 9 `.js` files + `Devtools.user.js` + `bump-version.mjs`)
@@ -17,9 +34,11 @@ sed -i 's#YOUR_GH_USER/YOUR_REPO#myname/dt-sidebar#g' Devtools.user.js
 git add -A && git commit -m "wire hosting URLs" && git push
 ```
 
-The URLs point at
-`https://raw.githubusercontent.com/<user>/<repo>/main/<file>` — `main` is the
-branch, so the URL is stable across every future version.
+`@downloadURL`/`@updateURL` point at
+`https://raw.githubusercontent.com/<user>/<repo>/main/Devtools.user.js` (stable
+across versions); the `@require`s point at
+`https://cdn.jsdelivr.net/gh/<user>/<repo>@vX.Y.Z/<file>` (re-pinned
+automatically by `bump-version.mjs` on every release).
 
 ## 3. Install
 Open
@@ -31,18 +50,28 @@ in a browser with Tampermonkey → it offers to install. Done.
 ```bash
 # edit any file(s) …
 node bump-version.mjs            # patch bump; or: minor | major | 3.4.0
-git add -A && git commit -m "vX.Y.Z" && git push
+git add -A && git commit -m "vX.Y.Z"
+git tag vX.Y.Z
+git push && git push origin vX.Y.Z   # the tag push is REQUIRED — see below
 ```
 
 Tampermonkey re-checks `@updateURL` on its interval (Dashboard → Settings →
 **Check for updates**, or click **Check for userscript updates** to force it).
 `raw.githubusercontent.com` refreshes within ~5 min of a push.
 
+### Why the tag push is mandatory
+The `@require` lines point at `cdn.jsdelivr.net/gh/<user>/<repo>@vX.Y.Z/…` —
+`bump-version.mjs` rewrites that pin to the new version, so if the matching
+git tag isn't on GitHub, jsDelivr 404s and the new install/update comes up
+with missing dependencies.
+
 ### Why the version bump is mandatory
 Tampermonkey **caches `@require` files and only re-downloads them when the main
 script's `@version` increases.** So editing a dependency and pushing does nothing
 until `Devtools.user.js`'s version goes up — which is exactly what
-`bump-version.mjs` does (it bumps every file's header so they never drift).
+`bump-version.mjs` does (it bumps every file's header so they never drift). The
+pinned jsDelivr URLs also change on every bump, which busts both Tampermonkey's
+and the CDN's caches deterministically.
 
 ## Fast local dev loop (optional, no pushing)
 While actively hacking, serve the folder and point `@require` at localhost:
