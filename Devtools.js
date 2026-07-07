@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.7
+// @version      3.6.8
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -2752,6 +2752,14 @@
   // ─── Patch fetch (robust with re-patching) ────────────────────────────────────
   let _fetch = null;       // what the outermost patch forwards to (may be a later site wrapper)
   let _nativeFetch = null; // the true native fetch, captured once at the FIRST patch and never replaced
+  // Re-entrancy marker for the double-wrap case (see the guard in patchedFetch).
+  // A WeakSet — NOT a property written onto the caller's Request/init — because
+  // frameworks that wrap fetch (Next.js, Sentry) key their own per-request
+  // metadata off the exact request/init object identity (and off non-enumerable
+  // props). Mutating or shallow-copying those objects made their lookup miss
+  // (e.g. Next.js threw "requestData is null" reading `.body`). We only ever ADD
+  // objects we forward, then remove them once the downstream call settles.
+  const _dtSeen = new WeakSet();
   function setupFetchPatch() {
     if (!realWindow.fetch) return; // fetch not available yet
     // Already our patched fetch — nothing to do. Re-wrapping fetch every tick
@@ -2782,7 +2790,7 @@
           // fetch, not _fetch: after a re-patch, _fetch points at the site
           // wrapper that sits in front of this very layer, so forwarding there
           // would recurse forever.
-          if ((init && init.__dt_seen) || (isReqObj && input.__dt_seen)) {
+          if ((input && typeof input === 'object' && _dtSeen.has(input)) || (init && typeof init === 'object' && _dtSeen.has(init))) {
             return (_nativeFetch || _fetch)(input, isReqObj ? undefined : init);
           }
           const url = typeof input === 'string' ? input : (input?.url || '');
@@ -2861,14 +2869,21 @@
             rawInput = actualUrl;
             fetchInit = actualInit;
           }
-          // Mark the forwarded request so an inner patched layer (if a site
-          // wrapper sandwiched one — see the re-entrancy guard above) passes it
-          // through untouched instead of intercepting/capturing it again.
+          // Mark the forwarded objects so an inner patched layer (if a site
+          // wrapper sandwiched one — see the re-entrancy guard above) passes
+          // them through untouched instead of intercepting/capturing again.
+          // Done via the WeakSet so we never mutate/copy the caller's objects
+          // (that broke Next.js's per-request metadata). Cleared once the
+          // downstream call settles so a reused init object isn't skipped next
+          // time.
+          const _seenAdded = [];
           try {
-            if (rawInput instanceof realWindow.Request) rawInput.__dt_seen = true;
-            else fetchInit = { ...(fetchInit || {}), __dt_seen: true };
+            if (rawInput && typeof rawInput === 'object') { _dtSeen.add(rawInput); _seenAdded.push(rawInput); }
+            if (fetchInit && typeof fetchInit === 'object') { _dtSeen.add(fetchInit); _seenAdded.push(fetchInit); }
           } catch {}
-          const response = await _fetch(rawInput, fetchInit);
+          let response;
+          try { response = await _fetch(rawInput, fetchInit); }
+          finally { _seenAdded.forEach(o => { try { _dtSeen.delete(o); } catch {} }); }
           // Streaming responses (SSE — chat UIs like claude.ai/ChatGPT stream
           // everything this way) must NEVER be cloned/read/held: clone().text()
           // buffers the stream and only resolves when it ENDS (never, for
