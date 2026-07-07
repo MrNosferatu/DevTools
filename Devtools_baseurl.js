@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Base URL Switcher Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.7
+// @version      3.6.8
 // @description  Base URL Switcher plugin for DevTools Sidebar — a floating button for swapping between configured environments (prod/staging/...) on matching pages.
 // @author       MrNosferatu
 // ==/UserScript==
