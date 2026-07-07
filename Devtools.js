@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.4
+// @version      3.6.5
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -2662,9 +2662,28 @@
   // built-in fallback. An entry matches when its host equals the request's host.
   const MOCK_FAIL_FALLBACK_BODY = '{"success":false,"error":"Request failed (mocked by DevTools)"}';
   const MOCK_STATUS_TEXT = {400:'Bad Request',401:'Unauthorized',403:'Forbidden',404:'Not Found',408:'Request Timeout',409:'Conflict',422:'Unprocessable Entity',429:'Too Many Requests',500:'Internal Server Error',502:'Bad Gateway',503:'Service Unavailable',504:'Gateway Timeout'};
+  // Clamp to [200,599]: the Response constructor (fetch path) rejects anything
+  // outside that range, and sub-200 "statuses" aren't meaningful for mocking a
+  // finished HTTP response anyway.
   function mockFailStatus() {
     const n = parseInt(state.req.mockStatus, 10);
-    return (n >= 100 && n <= 599) ? n : 500;
+    return (n >= 200 && n <= 599) ? n : 500;
+  }
+  // 204/205/304 forbid a body — the Response constructor throws if you pass one.
+  const NULL_BODY_STATUSES = new Set([204, 205, 304]);
+  // Build the fetch Response for a mock WITHOUT ever throwing. A raw
+  // `new Response(body,{status})` throws on null-body statuses and out-of-range
+  // codes; an uncaught throw here rejects the whole fetch, so the page sees a
+  // network error / null instead of the mocked response the user configured.
+  function buildMockFetchResponse(m) {
+    const body = NULL_BODY_STATUSES.has(m.status) ? null : m.body;
+    try {
+      return new realWindow.Response(body, { status: m.status, statusText: m.statusText, headers: m.headers });
+    } catch (e) {
+      console.warn('[DevTools] Mock Fail: invalid status/body, serving 500 instead:', e);
+      try { return new realWindow.Response(m.body, { status: 500, statusText: 'Internal Server Error', headers: m.headers }); }
+      catch { return new realWindow.Response(m.body || ''); }
+    }
   }
   function resolveMockFailure(url) {
     const status = mockFailStatus();
@@ -2688,9 +2707,19 @@
     if (!body) body = (state.req.mockBody || '').trim() || MOCK_FAIL_FALLBACK_BODY;
     return { status, statusText: MOCK_STATUS_TEXT[status] || 'Error', body, headers: { 'content-type': 'application/json' } };
   }
+  // A mock body that isn't valid JSON reads back as `null` for any consumer
+  // using JSON parsing (fetch .json(), XHR responseType:'json', axios's default
+  // JSON transform) — since we serve it with content-type: application/json.
+  // That's the most common "the mocked response was null" cause, so flag it in
+  // the UI (warn, don't block — a user may deliberately mock non-JSON).
   function updateMockFailureHint() {
-    const el = $('dt-req-mock-hint'); if (!el) return;
-    el.textContent = `${mockFailStatus()} · ${(state.req.mockBody || '').trim() ? 'custom body' : 'default body'}`;
+    const el = $('dt-req-mock-hint');
+    const body = (state.req.mockBody || '').trim();
+    let bad = false;
+    if (body) { try { JSON.parse(body); } catch { bad = true; } }
+    const bodyEl = $('dt-req-mock-body');
+    if (bodyEl) bodyEl.classList.toggle('dt-mock-invalid', bad);
+    if (el) el.textContent = `${mockFailStatus()} · ${body ? 'custom body' : 'default body'}${bad ? ' · ⚠ invalid JSON' : ''}`;
   }
   function tryAutoTransform(url, body) {
     if (!state.res.autoTransform) return null;
@@ -2785,7 +2814,7 @@
                   catch (e) { console.warn('[DevTools] plugin capture failed:', e); }
                 }
               });
-              return new realWindow.Response(m.body, { status: m.status, statusText: m.statusText, headers: m.headers });
+              return buildMockFetchResponse(m);
             }
             // result.editedHeaders MUST be applied here — previously both
             // branches rebuilt actualInit without them, so header edits made

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.6.4
+// @version      3.6.5
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -593,6 +593,10 @@ const CSS = `
   .dt-mock-body-ed { width:100%; min-height:64px; box-sizing:border-box; padding:8px 10px; border:1.5px solid var(--bd); border-radius:7px; background:var(--sf); color:var(--tx); font-family:'IBM Plex Mono',monospace; font-size:11px; line-height:1.5; outline:none; resize:vertical; transition:border-color .15s; }
   .dt-mock-body-ed:focus { border-color:var(--ac); box-shadow:0 0 0 3px var(--ac-bg); }
   .dt-mock-body-ed::placeholder { color:var(--fa); }
+  /* Non-JSON mock body — served as application/json, so it would read back as
+     null for JSON consumers. Flagged, not blocked. */
+  .dt-mock-body-ed.dt-mock-invalid, .dt-baseurl-mock-input.dt-mock-invalid { border-color:var(--rd); }
+  .dt-mock-body-ed.dt-mock-invalid:focus, .dt-baseurl-mock-input.dt-mock-invalid:focus { box-shadow:0 0 0 3px var(--rd-bg); }
 
   /* Duplicate param button */
   .dt-param-dup { width:24px; height:24px; border-radius:5px; cursor:pointer; background:transparent; border:1px solid var(--bd); color:var(--fa); font-size:13px; display:flex; align-items:center; justify-content:center; flex-shrink:0; transition:all .12s; }
