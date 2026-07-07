@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Base URL Switcher Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.4
+// @version      3.6.5
 // @description  Base URL Switcher plugin for DevTools Sidebar — a floating button for swapping between configured environments (prod/staging/...) on matching pages.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -149,8 +149,12 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
       // modal's "Mock Fail" for URLs whose host matches one of this group's
       // entries (an entry-level override wins over this; see resolveMockFailure
       // in the core script).
-      el.querySelector(`#dt-bug-mock-${gi}`).addEventListener('input', e => {
+      const groupMockTa = el.querySelector(`#dt-bug-mock-${gi}`);
+      const flagMockJson = ta => { const v = ta.value.trim(); let bad = false; if (v) { try { JSON.parse(v); } catch { bad = true; } } ta.classList.toggle('dt-mock-invalid', bad); };
+      flagMockJson(groupMockTa);
+      groupMockTa.addEventListener('input', e => {
         state.baseUrl.groups[gi].mockBody = e.target.value;
+        flagMockJson(e.target); // served as application/json → non-JSON reads back null
         saveGroupsSoon();
       });
       // Enabled toggle
@@ -266,11 +270,14 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
       mockWrap.innerHTML = `<textarea class="dt-baseurl-mock-input" placeholder="optional — overrides the group/default Mock Fail body for this URL" spellcheck="false"></textarea>`;
       const mockTa = mockWrap.querySelector('textarea');
       mockTa.value = entry.mockBody || '';
+      const flagEntryJson = ta => { const v = ta.value.trim(); let bad = false; if (v) { try { JSON.parse(v); } catch { bad = true; } } ta.classList.toggle('dt-mock-invalid', bad); };
+      flagEntryJson(mockTa);
       const mockBtn = row.querySelector('.dt-baseurl-entry-mock');
       mockBtn.addEventListener('click', () => mockWrap.classList.toggle('open'));
       mockTa.addEventListener('input', e => {
         state.baseUrl.groups[gi].entries[ei].mockBody = e.target.value;
         mockBtn.classList.toggle('has-mock', !!e.target.value.trim());
+        flagEntryJson(e.target); // served as application/json → non-JSON reads back null
         saveGroupsSoon();
       });
       cont.appendChild(mockWrap);
