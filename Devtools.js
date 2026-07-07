@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.6
+// @version      3.6.7
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -81,11 +81,6 @@
       // overridden per Base URL group / URL entry (see resolveMockFailure).
       mockStatus: Store.get('req.mockStatus', 500),
       mockBody:   Store.get('req.mockBody', ''),
-      // Send real request: OFF fabricates the mock locally (no network call);
-      // ON sends the real request to the server, then discards its response and
-      // returns the mock — so the request runs and shows in the browser's
-      // Network tab.
-      mockSendReal: Store.get('req.mockSendReal', false),
     },
     res: {
       enabled:       Store.get('res.enabled', false),
@@ -155,7 +150,6 @@
     'req.methods':  () => { state.req.methods = Store.get('req.methods', ['POST','PUT','PATCH']); syncNetworkPanel(); },
     'req.mockStatus': () => { state.req.mockStatus = Store.get('req.mockStatus', 500); syncNetworkPanel(); },
     'req.mockBody':   () => { state.req.mockBody = Store.get('req.mockBody', ''); syncNetworkPanel(); },
-    'req.mockSendReal': () => { state.req.mockSendReal = Store.get('req.mockSendReal', false); syncNetworkPanel(); },
 
     'res.enabled':  () => { state.res.enabled = Store.get('res.enabled', false); syncNetworkPanel(); },
     'res.persist':  () => { state.res.persist = Store.get('res.persist', false); syncNetworkPanel(); },
@@ -1160,12 +1154,6 @@
       Store.setSoon('req.mockStatus', state.req.mockStatus);
       updateMockFailureHint();
     });
-    const mockSendRealIn = $('dt-req-mock-sendreal');
-    if (mockSendRealIn) mockSendRealIn.addEventListener('change', e => {
-      state.req.mockSendReal = e.target.checked;
-      Store.set('req.mockSendReal', state.req.mockSendReal);
-      updateMockFailureHint();
-    });
     const mockBodyIn = $('dt-req-mock-body');
     if (mockBodyIn) mockBodyIn.addEventListener('input', e => {
       state.req.mockBody = e.target.value;
@@ -1519,7 +1507,6 @@
     // (this also runs on cross-tab sync); same guard as the regex fields.
     const ms=$('dt-req-mock-status'); if(ms && dtRoot.activeElement!==ms) ms.value=state.req.mockStatus;
     const mb=$('dt-req-mock-body'); if(mb && dtRoot.activeElement!==mb) mb.value=state.req.mockBody||'';
-    const msr=$('dt-req-mock-sendreal'); if(msr) msr.checked=!!state.req.mockSendReal;
     updateMockFailureHint();
     updateQueueUI('req');
     const se=$('dt-res-enabled'); if(se) se.checked=state.res.enabled;
@@ -2160,9 +2147,7 @@
       const newMockFail = mockFailBtn.cloneNode(true);
       mockFailBtn.replaceWith(newMockFail);
       const mock = resolveMockFailure(req.url);
-      newMockFail.title = mock.sendReal
-        ? `Send the real request, then answer the page with a mocked ${mock.status} ${mock.statusText} response`
-        : `Don't send — answer with a mocked ${mock.status} ${mock.statusText} response`;
+      newMockFail.title = `Don't send — answer with a mocked ${mock.status} ${mock.statusText} response`;
       newMockFail.addEventListener('click', () => {
         ov.classList.remove('visible');
         removeFromQueue('pendingReqs', req);
@@ -2720,7 +2705,7 @@
       }
     } catch {}
     if (!body) body = (state.req.mockBody || '').trim() || MOCK_FAIL_FALLBACK_BODY;
-    return { status, statusText: MOCK_STATUS_TEXT[status] || 'Error', body, headers: { 'content-type': 'application/json' }, sendReal: !!state.req.mockSendReal };
+    return { status, statusText: MOCK_STATUS_TEXT[status] || 'Error', body, headers: { 'content-type': 'application/json' } };
   }
   // A mock body that isn't valid JSON reads back as `null` for any consumer
   // using JSON parsing (fetch .json(), XHR responseType:'json', axios's default
@@ -2734,7 +2719,7 @@
     if (body) { try { JSON.parse(body); } catch { bad = true; } }
     const bodyEl = $('dt-req-mock-body');
     if (bodyEl) bodyEl.classList.toggle('dt-mock-invalid', bad);
-    if (el) el.textContent = `${mockFailStatus()}${state.req.mockSendReal ? ' · sends real' : ''} · ${body ? 'custom body' : 'default body'}${bad ? ' · ⚠ invalid JSON' : ''}`;
+    if (el) el.textContent = `${mockFailStatus()} · ${body ? 'custom body' : 'default body'}${bad ? ' · ⚠ invalid JSON' : ''}`;
   }
   function tryAutoTransform(url, body) {
     if (!state.res.autoTransform) return null;
@@ -2819,23 +2804,9 @@
             // response interception: the user already chose the final body).
             if (result.mock) {
               const m = result.mock;
-              // "Send real request" mode: actually perform the request so it
-              // hits the network (visible in the browser's Network tab and
-              // processed by the server), then discard its real response and
-              // return the mock. Forward the ORIGINAL request untouched, marked
-              // so an inner patched layer passes it straight through. A failure
-              // of the real request must NOT reject the page's call — we still
-              // return the mock.
-              if (m.sendReal) {
-                try {
-                  let realInput = input, realInit = isReqObj ? undefined : init;
-                  try { if (realInput instanceof realWindow.Request) realInput.__dt_seen = true; else realInit = { ...(realInit || {}), __dt_seen: true }; } catch {}
-                  await (_nativeFetch || _fetch)(realInput, realInit);
-                } catch (e) { /* real request failed — mock is returned regardless */ }
-              }
-              // Fan out to capture plugins (Monitor, ...) so the mocked exchange
-              // shows in the log. Duration reflects the real request when it was
-              // sent (reqStart → now), else it's ~instant.
+              // The request is answered locally — the script acts as the server
+              // for it. Nothing hits the network, so fan out to capture plugins
+              // (Monitor, ...) so the mocked exchange still shows in the log.
               const mockDuration = Math.round(performance.now() - reqStart);
               plugins.forEach(p => {
                 if (p.wantsCapture && p.onResponseCapture && p.wantsCapture(url, method)) {
@@ -3061,23 +3032,9 @@
   };
   function doXHR(xhr,bodyText,method,savedHeaders){
     queueReq(xhr._dt_url,method,savedHeaders,bodyText).then(result=>{
-      // "Mock Fail": fabricate a completed failure response on the page's XHR.
-      if(result.mock){
-        // "Send real request" mode: also fire the request for real over the
-        // wire (so it hits the server and shows in the browser's Network tab),
-        // then deliver the mock. We use a background native fetch as the real
-        // transport — the page's own XHR object still receives the mock. Wait
-        // for it (with credentials, so cookies are sent) so the mock's timing
-        // reflects the real round trip; a real failure still yields the mock.
-        if(result.mock.sendReal && (_nativeFetch || _fetch)){
-          const realFetch = _nativeFetch || _fetch;
-          realFetch(xhr._dt_url, { method, headers: savedHeaders, body: (method==='GET'||method==='HEAD')?undefined:bodyText, credentials:'include', __dt_seen:true })
-            .catch(()=>{}).finally(()=>mockXHRResponse(xhr,result.mock));
-        } else {
-          mockXHRResponse(xhr,result.mock);
-        }
-        return;
-      }
+      // "Mock Fail": never send — fabricate a completed failure response on the
+      // page's XHR (the script answers it locally, as the server).
+      if(result.mock){mockXHRResponse(xhr,result.mock);return;}
       // Headers on an already-opened XHR can't be replaced — if the user edited
       // them in the modal, re-open the request and set the edited set instead.
       // (Previously editedHeaders were ignored entirely on the XHR path.)

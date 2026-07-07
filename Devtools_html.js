@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — HTML
 // @namespace    http://tampermonkey.net/
-// @version      3.6.6
+// @version      3.6.7
 // @description  HTML template builders for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -110,14 +110,10 @@ function buildNetworkPanel() {
           <span class="dt-disclosure-hint" id="dt-req-mock-hint"></span>
         </button>
         <div class="dt-disclosure-body">
-          <div class="dt-note dt-note-tight" style="margin-top:0">The intercept modal's <em>Mock Fail</em> button answers the request with this response. The body can be overridden per group or per URL in the Environments tab.</div>
+          <div class="dt-note dt-note-tight" style="margin-top:0">The intercept modal's <em>Mock Fail</em> button answers the request with this response instead of sending it — the script acts as the server for that request. The body can be overridden per group or per URL in the Environments tab.</div>
           <div class="dt-row" style="margin:12px 0 10px">
             <div class="dt-row-label">Status code</div>
             <input class="dt-mock-status-input" id="dt-req-mock-status" type="text" inputmode="numeric" maxlength="3" spellcheck="false">
-          </div>
-          <div class="dt-row" style="margin:0 0 10px">
-            <div class="dt-row-label">Send real request ${tip('OFF: the request never leaves the browser — the mock is fabricated locally (nothing appears in the browser Network tab). ON: the real request IS sent to the server (so it runs and shows in DevTools), then its response is discarded and the mock is returned to the page instead.')}</div>
-            <label class="dt-toggle"><input type="checkbox" id="dt-req-mock-sendreal"><div class="dt-toggle-track"><div class="dt-toggle-thumb"></div></div></label>
           </div>
           <div class="dt-flabel" style="margin-bottom:5px">Default response body</div>
           <textarea class="dt-mock-body-ed" id="dt-req-mock-body" spellcheck="false" placeholder='{"success":false,"error":"Request failed (mocked by DevTools)"}'></textarea>
