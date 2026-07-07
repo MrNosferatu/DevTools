@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Constants
 // @namespace    http://tampermonkey.net/
-// @version      3.6.6
+// @version      3.6.7
 // @description  Shared constants for DevTools Sidebar. Must be loaded first via @require.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -9,7 +9,7 @@
 // Single runtime-readable copy of the script version (shown in the About
 // panel). bump-version.mjs rewrites this line together with every @version
 // header, so it can never drift from the release version again.
-const DT_VERSION = '3.6.6';
+const DT_VERSION = '3.6.7';
 
 const ALL_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 
