@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.5
+// @version      3.6.6
 // @description  Some tools for web development — request/response interceptor, editor, recorder, and more.
 // @author       MrNosferatu
 // @match        http://*/*
@@ -14,16 +14,16 @@
 // @run-at       document-start
 // @downloadURL  https://raw.githubusercontent.com/MrNosferatu/DevTools/main/Devtools.user.js
 // @updateURL    https://raw.githubusercontent.com/MrNosferatu/DevTools/main/Devtools.user.js
-// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.5/Devtools_constants.js
-// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.5/Devtools_plugins.js
-// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.5/Devtools_css.js
-// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.5/Devtools_html.js
-// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.5/Devtools_baseurl.js
-// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.5/Devtools_formfill.js
-// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.5/Devtools_monitor.js
-// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.5/Devtools_bench.js
-// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.5/Devtools_recorder.js
-// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.5/Devtools.js
+// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.6/Devtools_constants.js
+// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.6/Devtools_plugins.js
+// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.6/Devtools_css.js
+// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.6/Devtools_html.js
+// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.6/Devtools_baseurl.js
+// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.6/Devtools_formfill.js
+// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.6/Devtools_monitor.js
+// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.6/Devtools_bench.js
+// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.6/Devtools_recorder.js
+// @require      https://cdn.jsdelivr.net/gh/MrNosferatu/DevTools@v3.6.6/Devtools.js
 // ==/UserScript==
 
 // This entry file intentionally has no body — all logic lives in the @require'd
