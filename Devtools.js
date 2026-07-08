@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.8
+// @version      3.6.9
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -2501,6 +2501,29 @@
     return hosts;
   }
 
+  // ─── Framework-internal request detection ─────────────────────────────────────
+  // Next.js (App Router) drives navigation, prefetch, and Server Actions through
+  // its OWN fetch calls, marked with these request headers. They are NOT the
+  // page's API calls — a Server Action POSTs to the current page URL and expects
+  // a streamed `text/x-component` RSC payload back, so intercepting/holding/
+  // mocking one corrupts Next's client runtime (seen as "requestData is null").
+  // We pass them straight through, untouched and uncaptured, so the interceptor
+  // only ever acts on the app's real data requests. Matched on headers (works
+  // for both the fetch and XHR paths); response-side RSC is also skipped by
+  // content-type below.
+  const FRAMEWORK_REQ_HEADERS = ['rsc','next-router-prefetch','next-router-state-tree','next-action','next-url'];
+  function isFrameworkInternalReq(headers) {
+    if (!headers) return false;
+    try {
+      if (headers instanceof realWindow.Headers) return FRAMEWORK_REQ_HEADERS.some(h => headers.has(h));
+      if (typeof headers === 'object') {
+        const keys = Object.keys(headers).map(k => k.toLowerCase());
+        return FRAMEWORK_REQ_HEADERS.some(h => keys.includes(h));
+      }
+    } catch {}
+    return false;
+  }
+
   // ─── Intercept checks ─────────────────────────────────────────────────────────
   function shouldIntercept(ns,url,method){
     // Plugins can veto interception entirely (e.g. Bench, while a benchmark run
@@ -2795,6 +2818,10 @@
           }
           const url = typeof input === 'string' ? input : (input?.url || '');
           const method = ((init.method || (isReqObj ? input.method : 'GET')) || 'GET').toUpperCase();
+          // Next.js framework request (RSC/prefetch/Server Action)? Never touch
+          // it — pass straight through with no intercept, no capture.
+          const frameworkInternal = isFrameworkInternalReq(init.headers || (isReqObj ? input.headers : null));
+          if (frameworkInternal) return _fetch(input, isReqObj ? undefined : init);
           let actualUrl = url, actualInit = init, intercepted = false;
           if (shouldInterceptReq(url, method)) {
             intercepted = true;
@@ -2889,7 +2916,11 @@
           // buffers the stream and only resolves when it ENDS (never, for
           // keep-alive streams), so capturing froze the page and intercepting
           // hung it outright. Pass them through untouched.
-          const isEventStream = ((response.headers.get('content-type') || '').toLowerCase()).includes('text/event-stream');
+          // Never hold/clone streaming or RSC responses: SSE (text/event-stream,
+          // used by chat UIs) buffers forever, and text/x-component is Next.js's
+          // RSC payload — reading/replacing it corrupts navigation.
+          const _ct = (response.headers.get('content-type') || '').toLowerCase();
+          const isEventStream = _ct.includes('text/event-stream') || _ct.includes('text/x-component');
           // Plugin capture (Bench, Recorder, Monitor, ...) — extract request headers properly
           const capturingPlugins = isEventStream ? [] : plugins.filter(p => p.wantsCapture && p.wantsCapture(url, method));
           if (capturingPlugins.length) {
@@ -2957,6 +2988,10 @@
   XMLHttpRequest.prototype.send=function(body){
     const method=(this._dt_method||'').toUpperCase(),url=this._dt_url||'',savedHeaders={...(this._dt_headers||{})},self=this;
     const _dtSendStart = performance.now();
+
+    // Next.js framework request (RSC/prefetch/Server Action)? Leave it entirely
+    // alone — no capture, no intercept, no response hold. See isFrameworkInternalReq.
+    if (isFrameworkInternalReq(savedHeaders)) { _send.call(this, body); return; }
 
     // ── Independent plugin capture (e.g. API Recorder / Monitor) ──────────────
     // Decide up front which plugins actually want THIS url/method, then attach a

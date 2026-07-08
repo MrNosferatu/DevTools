@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Form Autofill Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.8
+// @version      3.6.9
 // @description  Form Autofill plugin for DevTools Sidebar — detect forms on the page, configure per-field fill values (fixed text, dynamic tokens, or defaults for selects/radios/checkboxes), with URL-param conditions, and fill them automatically on load.
 // @author       MrNosferatu
 // ==/UserScript==
