@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.9
+// @version      3.6.10
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -2146,14 +2146,23 @@
     if (mockFailBtn) {
       const newMockFail = mockFailBtn.cloneNode(true);
       mockFailBtn.replaceWith(newMockFail);
-      const mock = resolveMockFailure(req.url);
-      newMockFail.title = `Don't send — answer with a mocked ${mock.status} ${mock.statusText} response`;
-      newMockFail.addEventListener('click', () => {
-        ov.classList.remove('visible');
-        removeFromQueue('pendingReqs', req);
-        req.resolve({ mock });
-        showNextModal();
-      });
+      // Answering an RSC/navigation/prefetch request with a fabricated JSON
+      // failure crashes a frontend-server (e.g. Next.js) page — the caller
+      // expects a streamed text/x-component or HTML payload. Leave the request
+      // fully editable, but disable Mock Fail for it so it can't be delivered.
+      if (isMockUnsafeReq(req.url, req.headers)) {
+        newMockFail.disabled = true;
+        newMockFail.title = "Mock Fail is disabled for framework/navigation requests — a fabricated failure would crash the page. Edit and Send instead.";
+      } else {
+        const mock = resolveMockFailure(req.url);
+        newMockFail.title = `Don't send — answer with a mocked ${mock.status} ${mock.statusText} response`;
+        newMockFail.addEventListener('click', () => {
+          ov.classList.remove('visible');
+          removeFromQueue('pendingReqs', req);
+          req.resolve({ mock });
+          showNextModal();
+        });
+      }
     }
     // Skip — pass original through unmodified
     const skipBtn = $('dt-req-skip');
@@ -2512,6 +2521,25 @@
   // for both the fetch and XHR paths); response-side RSC is also skipped by
   // content-type below.
   const FRAMEWORK_REQ_HEADERS = ['rsc','next-router-prefetch','next-router-state-tree','next-action','next-url'];
+  // Read a header value case-insensitively from either a Headers instance or a
+  // plain object, so the value-based signals below work on both fetch and XHR
+  // header shapes. Returns '' when absent.
+  function readHeader(headers, name) {
+    try {
+      if (headers instanceof realWindow.Headers) return headers.get(name) || '';
+      if (headers && typeof headers === 'object') {
+        const want = name.toLowerCase();
+        for (const k of Object.keys(headers)) if (k.toLowerCase() === want) return String(headers[k] ?? '');
+      }
+    } catch {}
+    return '';
+  }
+  // A "framework internal" request is one Next.js's client runtime issues and
+  // consumes itself (RSC/Server Action/prefetch), marked by the headers above.
+  // Intercepting/holding/mutating one corrupts Next's runtime ("requestData is
+  // null"), so these skip the intercept path entirely. Detection is header-only
+  // and unchanged — the request-modification flow for everything else is exactly
+  // as it was.
   function isFrameworkInternalReq(headers) {
     if (!headers) return false;
     try {
@@ -2520,6 +2548,23 @@
         const keys = Object.keys(headers).map(k => k.toLowerCase());
         return FRAMEWORK_REQ_HEADERS.some(h => keys.includes(h));
       }
+    } catch {}
+    return false;
+  }
+  // Broader check used ONLY to disable Mock Fail (never to skip interception).
+  // A request that expects a streamed text/x-component (RSC) or an HTML document
+  // — an RSC navigation (`?_rsc=`), an RSC/prefetch fetch, or a navigation/
+  // prefetch request — crashes the page if answered with a fabricated JSON
+  // failure. Such requests still go through the normal modal and stay fully
+  // editable; only the "Mock Fail" button is turned off for them.
+  function isMockUnsafeReq(url, headers) {
+    try { if (url && /[?&]_rsc=/.test(url)) return true; } catch {}
+    if (isFrameworkInternalReq(headers)) return true;
+    try {
+      if (readHeader(headers, 'accept').toLowerCase().includes('text/x-component')) return true;
+      if (readHeader(headers, 'sec-fetch-dest').toLowerCase() === 'document') return true;
+      if (readHeader(headers, 'sec-purpose').toLowerCase().includes('prefetch')) return true;
+      if (readHeader(headers, 'purpose').toLowerCase() === 'prefetch') return true;
     } catch {}
     return false;
   }
