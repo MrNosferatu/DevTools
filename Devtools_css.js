@@ -6,29 +6,23 @@
 // @author       MrNosferatu
 // ==/UserScript==
 
-// ─── CSS ─────────────────────────────────────────────────────────────────────
 const CSS = `
-  /* NOTE: no @import here — the IBM Plex fonts are loaded by injectFonts() in
-     Devtools.js as a document-level <link>. An @import at the top of this
-     sheet made engines treat the WHOLE sheet as pending until the network
-     fetch resolved, so on a cold cache the sidebar painted as a raw unstyled
-     skeleton (the reveal fired before any rule applied). @font-face inside a
-     shadow tree also doesn't register fonts in Chromium — they must be
+  /* No @import here: fonts load via injectFonts() as a document-level <link>.
+     An @import makes the whole sheet pending on the network (unstyled flash on
+     cold cache), and @font-face inside a shadow tree doesn't register in
+     Chromium — they must be
      declared at document level to be usable in here at all. */
 
-  /* Shadow-DOM host. The whole UI lives in a shadow root, so page CSS can't
-     reach it at all (not even with !important) — except INHERITED properties
-     (font, color, ...) which still cross the boundary. \`all:initial\` on the
-     host severs that last channel; the rules below then set our own baseline.
-     Custom properties are NOT affected by \`all\`, so --dt-w still inherits from
-     <html> (set by applyLayout). The host box itself takes no space — its
+  /* Shadow-DOM host. Page CSS can't reach the shadow root except inherited
+     properties (font/color); \`all:initial\` severs that too. Custom properties
+     aren't affected by \`all\`, so --dt-w still inherits from <html>. The host
+     box itself takes no space — its
      children are position:fixed. */
   :host { all: initial; }
   #dt-root { font-family: 'IBM Plex Sans', -apple-system, sans-serif; }
 
-  /* Style isolation: reset properties that site stylesheets commonly clobber.
-     Kept even under shadow DOM as a belt-and-suspenders baseline for our own
-     descendants (the shadow tree inherits nothing from the page now). */
+  /* Style isolation: reset properties site stylesheets commonly clobber
+     (belt-and-suspenders baseline for our own descendants). */
   #dt-tab, #dt-sidebar, #dt-req-overlay, #dt-res-overlay,
   #dt-presets-overlay, #dt-save-preset-overlay,
   #dt-tab *, #dt-sidebar *, #dt-req-overlay *, #dt-res-overlay *,
@@ -53,13 +47,10 @@ const CSS = `
   #dt-req-overlay.dt-ready #dt-req-modal,#dt-res-overlay.dt-ready #dt-res-modal,#dt-presets-overlay.dt-ready #dt-presets-modal { transition:transform 0.22s cubic-bezier(.34,1.2,.64,1); }
   #dt-req-overlay.visible,#dt-res-overlay.visible,#dt-presets-overlay.visible,#dt-save-preset-overlay.visible { opacity:1; pointer-events:all; }
 
-  /* Scoped to the script's own top-level elements — NOT :root. Generic names
-     like --bg/--tx/--ac on :root collided with host pages' own CSS variables
-     in both directions (we overrode theirs; theirs bled into us). --w moved
-     to the dt-prefixed --dt-w, set on <html> by applyLayout(). */
+  /* Scoped to our own top-level elements, NOT :root: generic var names on :root
+     collided with host pages' variables both ways. --w is now --dt-w on <html>. */
   #dt-tab, #dt-sidebar, .dt-overlay, #dt-baseurl-fab, .dt-rec-kebab-menu, #dt-tip-portal {
-    /* Light theme — brand-neutral, higher legibility. --mu/--fa raised so
-       secondary/faint text clears WCAG AA on the surfaces they sit on. */
+    /* Light theme; --mu/--fa raised so faint text clears WCAG AA. */
     --bg:#ffffff; --sf:#f5f6f8; --sf2:#eceef2;
     --bd:#e3e5ea; --bd2:#c5c9d2;
     --tx:#14161c; --tx2:#3d4250; --mu:#646b7d; --fa:#9aa0af;
@@ -75,10 +66,8 @@ const CSS = `
     --r-sm:6px; --r-md:9px; --r-lg:13px;
     --ease:cubic-bezier(.4,0,.2,1);
   }
-  /* Dark theme token set — selectors repeated with IDs so specificity beats
-     the scoped light defaults above. Muted/faint tokens were the main dark-mode
-     readability problem (near-invisible labels, arrows, counts); they're now
-     lifted well clear of the background so no secondary text disappears. */
+  /* Dark theme; selectors repeated with IDs so specificity beats the light
+     defaults above. Muted/faint tokens lifted clear for readability. */
   #dt-tab.dt-dark, #dt-sidebar.dt-dark, .dt-overlay.dt-dark, #dt-baseurl-fab.dt-dark, .dt-rec-kebab-menu.dt-dark, #dt-tip-portal.dt-dark {
     --bg:#16171b; --sf:#1f2127; --sf2:#292c34;
     --bd:#33363f; --bd2:#484c58;
@@ -147,8 +136,7 @@ const CSS = `
   /* Tooltip */
   .dt-tip { position:relative; display:inline-flex; align-items:center; }
   .dt-tip-icon { width:15px; height:15px; border-radius:50%; border:1.5px solid var(--bd2); color:var(--mu); font-size:9px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; cursor:default; flex-shrink:0; }
-  /* Just a hidden data holder — the visible tooltip is rendered into #dt-tip-portal
-     (see the portal rules below); the JS reads this element's innerHTML. */
+  /* Hidden data holder; the visible tip renders into #dt-tip-portal. */
   .dt-tip-text { display:none; }
 
   /* Appearance mode tabs */
@@ -255,11 +243,8 @@ const CSS = `
   /* Modal overlay */
   .dt-overlay { position:fixed; inset:0; z-index:999993; background:rgba(0,0,0,.42); display:flex; align-items:center; justify-content:center; backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px); pointer-events:none; }
   .dt-overlay.visible { pointer-events:all; }
-  /* Sidebar stays above overlays so it remains clickable — but only while one is
-     actually open. This used to apply unconditionally, which permanently parked
-     the sidebar above everything else in the stack (including the kebab menu)
-     even with no modal in sight, no matter how high the kebab menu's own
-     z-index was set. */
+  /* Sidebar sits above overlays while one is open (via :has, so it doesn't
+     permanently outrank the kebab menu when no modal is up). */
   #dt-root:has(.dt-overlay.visible) #dt-sidebar { z-index:999995 !important; }
   #dt-root:has(.dt-overlay.visible) #dt-tab { z-index:999995 !important; }
 
@@ -407,16 +392,12 @@ const CSS = `
   .dt-modal-foot { padding:12px 18px; border-top:1px solid var(--bd); display:flex; align-items:center; gap:10px; flex-shrink:0; background:var(--sf); }
   .dt-modal-count { font-family:'IBM Plex Mono',monospace; font-size:9.5px; color:var(--mu); white-space:nowrap; }
   .dt-foot-btn { flex:1; padding:9px; font-size:12.5px; font-weight:500; border-radius:8px; cursor:pointer; border:1.5px solid; transition:all .15s; }
-  /* No generic hover color here: it used to set color:var(--tx), which (at equal
-     specificity, declared earlier) leaked into every variant that didn't restate
-     its own color on hover — most visibly turning the solid Send button's white
-     label near-black on light themes. Each variant styles its own hover below. */
+  /* No generic hover color: color:var(--tx) here leaked into variants that don't
+     restate their color (darkened Send's white label). Variants style own hover. */
   .dt-foot-btn:hover { border-color:var(--bd2); }
   .dt-foot-btn-abort { background:var(--bg); border-color:var(--bd); color:var(--tx2); }
   .dt-foot-btn-abort:hover { border-color:var(--rd-bd); color:var(--rd); background:var(--rd-bg); }
-  /* Primary action — identical in the request AND response modal. The response
-     modal's Apply used to carry a hardcoded violet (res-send) that didn't match
-     the request modal's accent button on the default theme. */
+  /* Primary action, identical in request and response modals (uses the theme accent). */
   .dt-foot-btn-send { background:var(--ac); border-color:var(--ac); color:var(--ac-tx,#fff); }
   .dt-foot-btn-send:hover { filter:brightness(.92); box-shadow:0 4px 12px var(--ring); }
 

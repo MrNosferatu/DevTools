@@ -6,16 +6,12 @@
 // @author       MrNosferatu
 // ==/UserScript==
 
-// Registers a factory rather than running immediately — see Devtools_plugins.js.
-// Note: getGroupHosts() stays a CORE helper (exposed via ctx) rather than
-// living here, because the Recorder plugin also needs it to match its
-// "attach a Base URL group as a target" feature, and ctx is built once before
-// any plugin factory runs — a plugin can't hand a function to ctx in time for
-// other plugins in the same registration pass to use it.
+// Registers a factory (see Devtools_plugins.js). getGroupHosts() stays a core
+// ctx helper because the Recorder plugin needs it too, and ctx is built before
+// any plugin factory runs.
 DT_registerPlugin(function createBaseUrlPlugin(ctx) {
   const { Store, state, $, $$, $1, escHtml, BASEURL_COLORS, getGroupHosts } = ctx;
 
-  // ─── Base URL Switcher panel HTML ─────────────────────────────────────────────
   function buildBaseUrlPanel() {
     return `
       <div class="dt-section">
@@ -37,7 +33,6 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
     `;
   }
 
-  // ─── Base URL Panel ──────────────────────────────────────────────────────────
   function initBaseUrlPanel() {
     const enabledChk = $('dt-baseurl-enabled');
     if (!enabledChk) return;
@@ -67,15 +62,10 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
     checkBaseUrlFab();
   }
 
-  // Debounced persistence + derived-UI refresh for rapid text input.
-  // Callers update in-memory `state` synchronously (so the field value is always
-  // authoritative and never re-rendered mid-type); this coalesces the expensive
-  // follow-up work — Store.set serializes the ENTIRE groups array to GM storage
-  // (a synchronous disk/IndexedDB write, slow on Firefox), plus FAB rebuild,
-  // plugin notify, and host re-render — so it runs once ~300ms after typing
-  // settles instead of on every keystroke. Doing it per-keystroke pegged the CPU
-  // to 100% and dropped characters. Flags accumulate across coalesced calls so
-  // no refresh is lost if the user jumps between fields within the window.
+  // Debounced persistence + derived-UI refresh for rapid text input. Callers
+  // update in-memory `state` synchronously; this coalesces the expensive
+  // follow-up (full groups-array Store.set, FAB rebuild, notify, re-render) to
+  // ~300ms after typing settles. Flags accumulate across coalesced calls.
   let _saveTimer = null;
   let _saveFlags = { fab: false, notify: false, hosts: null };
   function saveGroupsSoon(opts) {
@@ -282,14 +272,9 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
       });
       cont.appendChild(mockWrap);
     });
-    // Persist ONLY when a missing color default was actually assigned. This
-    // write used to run unconditionally on every render — and the cross-tab
-    // sync handler for 'baseurl.groups' re-renders on every remote change, so
-    // any edit in one tab made every other tab (the script runs on ALL sites)
-    // re-render AND write the value straight back, re-triggering everyone in an
-    // infinite ping-pong. With 2+ tabs open, one keystroke in any Environments
-    // field stormed thousands of synchronous GM writes per second across all
-    // tabs and froze the whole browser.
+    // Persist ONLY when a missing color default was assigned. An unconditional
+    // write here ping-pongs with the cross-tab sync handler (which re-renders on
+    // every remote change), storming GM writes across all tabs.
     if (colorAssigned) Store.set('baseurl.groups', state.baseUrl.groups);
     if (!renderBaseUrlEntries._closerBound) {
       renderBaseUrlEntries._closerBound = true;
@@ -431,12 +416,9 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
     'baseurl.enabled': () => { state.baseUrl.enabled = Store.get('baseurl.enabled', false); checkBaseUrlFab(); },
     'baseurl.groups':  () => {
       state.baseUrl.groups = Store.get('baseurl.groups', []);
-      // Don't rebuild the panel underneath an actively-focused groups field —
-      // the innerHTML swap would destroy the input the user is typing into
-      // (dead keystrokes, just a blinking caret) whenever another tab saves.
-      // The in-memory state is updated either way; input handlers look up
-      // state.baseUrl.groups[gi] at event time, so edits keep landing in the
-      // fresh array and the panel repaints on the next non-focused sync.
+      // Don't rebuild the panel under a focused field (the innerHTML swap kills
+      // the input mid-type). State updates either way; it repaints on the next
+      // non-focused sync.
       const list = $('dt-baseurl-groups-list');
       const focused = $1 ? $1(':focus') : null;
       if (!(list && focused && list.contains(focused))) renderBaseUrlGroups();

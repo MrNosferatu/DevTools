@@ -13,61 +13,42 @@
 // @grant        unsafeWindow
 // @run-at       document-start
 // ==/UserScript==
-//
-// NOTE: This file is the MAIN body and is loaded as the LAST @require by the
-// installable entry script, Devtools.user.js. Install/host that file — its
-// header owns the real @require list, @version, and @update/@downloadURL.
-// Tampermonkey ignores the metadata block above when this file is @require'd.
+// MAIN body — loaded as the LAST @require by Devtools.user.js (which owns the
+// real @require list, @version, and @update/@downloadURL). Install/host that file.
 
 (function () {
   'use strict';
 
-  // Run ONLY in the top-level document. `@match http(s)://*/*` also matches every
-  // same-scheme iframe on a page (reCAPTCHA widgets, some embedded video players,
-  // ad/analytics frames, …), so without this each of those frames would run the
-  // script and inject its own duplicate sidebar/tab — exactly the "multiple
-  // sidebars" seen on captchas and certain players. `@noframes` in the metadata
-  // stops compliant managers from running us in frames at all; this is the
-  // runtime backstop for the rest, and also avoids needlessly patching fetch/XHR
-  // inside subframes (there's no UI there to service an intercept anyway).
-  // Comparing the window *references* is safe cross-origin (no property access).
+  // Top-level document only. `@match *://*/*` also matches every same-scheme
+  // iframe (captchas, embedded players, ad frames), each of which would otherwise
+  // inject a duplicate sidebar and needlessly patch fetch/XHR. Comparing window
+  // references is safe cross-origin.
   if (window.top !== window.self) return;
 
-  // Some userscript managers (Tampermonkey/Violentmonkey, depending on their
-  // Sandbox Mode setting) run this script in an isolated JS realm where `window`
-  // is a wrapper, not the page's real global object. Mutating a shared prototype
-  // (XMLHttpRequest.prototype.send, etc.) still reaches the page either way, but
-  // assigning a plain property like `window.fetch = ...` does NOT — it only
-  // shadows fetch inside our own sandbox, leaving the page's real fetch calls
-  // completely unpatched and invisible to us. `unsafeWindow` (when available) is
-  // the actual page window and is required to patch fetch reliably.
+  // In sandboxed userscript realms `window` is a wrapper: `window.fetch = ...`
+  // only shadows fetch inside our sandbox, leaving the page's real fetch
+  // unpatched. `unsafeWindow` is the page's real global and is required to patch
+  // fetch reliably. (Prototype mutations reach the page either way.)
   const realWindow = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
 
-  // ─── Store ────────────────────────────────────────────────────────────────────
   const Store = {
     get(k, fb) { try { return GM_getValue(k, fb); } catch { try { const v = localStorage.getItem('__dt_'+k); return v===null?fb:JSON.parse(v); } catch { return fb; } } },
     set(k, v)  { try { GM_setValue(k, v); } catch { try { localStorage.setItem('__dt_'+k, JSON.stringify(v)); } catch {} } },
-    // Debounced write, keyed by storage key. GM_setValue serializes the value and
-    // writes to backing storage synchronously (notably slow in Firefox), so doing
-    // it on every keystroke of a text field floods the main thread and drops
-    // characters. This coalesces bursts to a single write ~300ms after the last
-    // change. Only for values where a brief persistence delay is harmless (live
-    // text/color editing); use set() directly when the write must be immediate.
+    // Debounced write keyed by storage key: GM_setValue writes synchronously
+    // (slow in Firefox), so per-keystroke writes drop characters. Coalesces to a
+    // single write ~300ms after the last change; only for delay-tolerant values.
     _t: {},
     setSoon(k, v, ms) { clearTimeout(this._t[k]); this._t[k] = setTimeout(() => { this._t[k] = null; this.set(k, v); }, ms || 300); }
   };
 
-  // ─── Edit Memory store (localStorage) ─────────────────────────────────────────
-  // Deliberately localStorage (not GM storage / sessionStorage): the user wants
-  // recorded edits to survive a browser restart, and to be removable one-by-one
-  // or all at once from the UI. Kept separate from `Store` so it's trivially
-  // clearable and never entangled with the interceptor's own settings.
+  // Edit Memory: deliberately localStorage (not GM/session storage) so recorded
+  // edits survive restart, stay individually clearable, and never entangle with
+  // the interceptor's own settings.
   const EDIT_MEM_KEY = '__dt_edit_memory';
   const EDIT_MEM_MAX = 40; // cap so the list (and localStorage) can't grow unbounded
   function loadEditMemory() { try { const v = localStorage.getItem(EDIT_MEM_KEY); return v ? JSON.parse(v) : []; } catch { return []; } }
   function saveEditMemory(arr) { try { localStorage.setItem(EDIT_MEM_KEY, JSON.stringify(arr)); } catch {} }
 
-  // ─── State ────────────────────────────────────────────────────────────────────
   const state = {
     sidebarOpen: false,
     req: {
@@ -109,12 +90,8 @@
       customBd:   Store.get('layout.customBd', ''),
     },
     resPresets: Store.get('res.presets', []),
-    // ── Keyboard shortcuts ────────────────────────────────────────────────────
-    // Global hotkeys for quickly toggling interception without opening the
-    // Network panel. Combos are stored as normalized strings (e.g. "Alt+Shift+I").
-    // Defaults are a left-hand-only cluster (left Alt + Q/W/A/S) so every
-    // shortcut can be triggered one-handed while the other hand stays on the
-    // mouse. They avoid the browser's own Ctrl+Shift+I / Alt+D style shortcuts.
+    // Global intercept-toggle hotkeys, stored as normalized strings (e.g.
+    // "Alt+Shift+I"). Defaults are a one-handed left Alt + Q/W/A/S cluster.
     keybinds: {
       toggleBoth:    Store.get('keybinds.toggleBoth',    'Alt+Q'),
       toggleReq:     Store.get('keybinds.toggleReq',     'Alt+W'),
@@ -134,14 +111,9 @@
   if (!state.req.persist) state.req.enabled = false;
   if (!state.res.persist) state.res.enabled = false;
 
-  // ─── Cross-tab settings sync ─────────────────────────────────────────────────
-  // GM storage is shared across every tab running this script, but without this,
-  // a change in one tab only updates that tab's in-memory `state` — other open
-  // tabs keep showing stale values until reloaded. GM_addValueChangeListener
-  // fires in ALL tabs (including the one that didn't make the change) whenever a
-  // value changes; `remote === true` tells us it came from elsewhere, so we pull
-  // the new value and refresh whatever UI depends on it. We skip remote===false
-  // because that tab already updated its own state directly when it made the change.
+  // Cross-tab settings sync. GM_addValueChangeListener fires in all tabs on a
+  // value change; remote===true means it came from another tab, so we pull the
+  // new value and refresh dependent UI (remote===false already updated locally).
   const STORAGE_SYNC_HANDLERS = {
     'req.enabled':  () => { state.req.enabled = Store.get('req.enabled', false); syncNetworkPanel(); },
     'req.persist':  () => { state.req.persist = Store.get('req.persist', false); syncNetworkPanel(); },
@@ -191,26 +163,15 @@
           if (!remote) return;
           try { STORAGE_SYNC_HANDLERS[name](); } catch (e) { console.warn('[DevTools] cross-tab sync failed for', name, e); }
         });
-      } catch (e) { /* manager doesn't support it — sync just won't happen, no crash */ }
+      } catch (e) {}
     });
   }
-  // initStorageSync() is called further down, after plugins have merged their
-  // own storage-sync handlers into STORAGE_SYNC_HANDLERS (see "Plugins" section).
+  // Called after plugins merge their own handlers into STORAGE_SYNC_HANDLERS.
 
-  // Legacy Base URL group data migration (older versions stored one color per
-  // group + an activeIdx + a regex matchPattern) now lives in the Base URL
-  // plugin's getDefaultState — see Devtools_baseurl.js.
-
-  // ─── Shadow root ──────────────────────────────────────────────────────────────
-  // The entire UI is mounted inside a shadow root so host-page CSS cannot reach
-  // it — not even rules with !important, aggressive resets, or `#app *` blanket
-  // styles. A shadow boundary only lets INHERITED properties (font/color/…)
-  // through; `all:initial` on the host severs that too (see the `:host` rule in
-  // Devtools_css.js). Everything the UI creates at runtime (overlays, the tip
-  // portal, the toast, the recorder's kebab menu) appends into this root, and
-  // every UI lookup goes through the `$`/`$$`/`$1` helpers below, which query
-  // the shadow tree instead of `document`. Page-scoped queries (Form Autofill's
-  // form detection) deliberately keep using `document`.
+  // The whole UI mounts inside a shadow root so host-page CSS can't reach it;
+  // `all:initial` on the host severs inherited properties too. Runtime nodes
+  // append here and lookups go through $/$$/$1 (shadow-scoped). Page-scoped
+  // queries (Form Autofill) deliberately keep using `document`.
   let dtHost = null, dtRoot = null;
   function ensureRoot() {
     if (dtRoot) return dtRoot;
@@ -228,45 +189,32 @@
     document.documentElement.appendChild(dtHost);
     return dtRoot;
   }
-  // Where UI nodes mount (the #dt-root wrapper), falling back to the shadow root.
   function rootMount() { const r = ensureRoot(); return r ? (r.getElementById('dt-root') || r) : null; }
 
-  // ─── DOM helpers (scoped to the shadow root) ──────────────────────────────────
+  // DOM helpers, scoped to the shadow root
   const $  = id  => dtRoot ? dtRoot.getElementById(id) : null;
   const $$ = sel => dtRoot ? dtRoot.querySelectorAll(sel) : [];
   const $1 = sel => dtRoot ? dtRoot.querySelector(sel) : null;
 
-  // ─── Editor theme helpers ─────────────────────────────────────────────────────
   function getEditorTheme() {
     const key = state.editorSettings.theme;
     if (key === 'custom') {
-      // Build a full theme from catppuccin as structural base, override bg/text only
+      // catppuccin as structural base, override bg/text only
       const base = { ...ED_THEMES.catppuccin };
       if (state.editorSettings.customBg)   base.bg   = state.editorSettings.customBg;
       if (state.editorSettings.customText) base.text = state.editorSettings.customText;
       return base;
     }
-    const base = ED_THEMES[key] || ED_THEMES.catppuccin;
-    const out = { ...base };
-    // customBg/customText are only used in custom mode; named themes use their own colors
-    return out;
+    return { ...(ED_THEMES[key] || ED_THEMES.catppuccin) };
   }
   function getEditorFont() {
     return (ED_FONTS.find(x => x.id === state.editorSettings.font) || ED_FONTS[0]).css;
   }
 
-  // ─── Inject ───────────────────────────────────────────────────────────────────
-  // ─── Critical flash-guard ─────────────────────────────────────────────────────
-  // A tiny stylesheet injected as early as possible (document-start), long before
-  // the ~80KB main stylesheet is parsed. It hides every top-level element until
-  // it's explicitly revealed with .dt-ready. Why this is needed: the main
-  // stylesheet's own `visibility:hidden` rules only prevent a flash if they're
-  // applied in the SAME frame the elements first paint — but on a cold (uncached)
-  // load the big stylesheet can land a frame late, and a host page's own CSS can
-  // override a non-!important rule. This rule is trivially fast to parse and uses
-  // !important, so neither race can let the UI paint for even one frame. Once
-  // .dt-ready is added the `:not(.dt-ready)` selector stops matching and the
-  // normal (transitioned) styles take over.
+  // Critical flash-guard: a tiny !important stylesheet injected at document-start,
+  // before the big main sheet parses, hiding every top-level element until
+  // .dt-ready is added. Prevents an unstyled flash if the main sheet lands a frame
+  // late on a cold load or a host rule overrides its non-!important visibility.
   function injectCriticalHide() {
     const root = ensureRoot();
     if (!root || root.getElementById('dt-critical-hide')) return;
@@ -276,12 +224,9 @@
     root.appendChild(s);
   }
 
-  // Web fonts — a document-level <link>, deliberately NOT an @import inside
-  // the shadow stylesheet: (1) the @import made the whole sheet wait on the
-  // network before applying, flashing an unstyled skeleton on cold loads;
-  // (2) @font-face inside a shadow tree doesn't register fonts in Chromium,
-  // so document level is the only place they reliably load from anyway. If a
-  // host page's CSP blocks the CDN, the UI just falls back to system fonts.
+  // Web fonts as a document-level <link>, not an @import in the shadow sheet:
+  // @import blocks the whole sheet on the network, and @font-face inside a shadow
+  // tree doesn't register fonts in Chromium. CSP-blocked CDN falls back to system.
   function injectFonts() {
     if (document.getElementById('dt-fonts')) return;
     const link = document.createElement('link');
@@ -308,14 +253,9 @@
       .replace('<!--dt-panel-plugins-->', pluginPanelHtml);
     while (wrap.firstChild) mount.appendChild(wrap.firstChild);
 
-    // Reveal only once the main stylesheet is OBSERVABLY applied, not after a
-    // fixed frame count. The old double-rAF reveal assumed injection implies
-    // application, but engines can hold a sheet pending (historically: the
-    // Google-Fonts @import that used to sit at its top) — the hide guard then
-    // expired while the sidebar was still unstyled, flashing a raw HTML
-    // skeleton on cold loads. Probe a rule the sheet is known to set and lift
-    // the guard only when it's live, with a 3s hard cap so the UI can never
-    // be lost outright if a host page interferes with the probe.
+    // Reveal only once the main stylesheet is observably applied (a fixed frame
+    // count can fire while a sheet is still pending, flashing an unstyled
+    // skeleton). Probe a known rule; 3s hard cap so the UI can't be lost outright.
     const revealStart = performance.now();
     const tryReveal = () => {
       const sb = $('dt-sidebar');
@@ -336,7 +276,6 @@
     plugins.forEach(p => { if (p.initPanel) p.initPanel(); });
   }
 
-  // ─── Apply editor theme to all editors ───────────────────────────────────────
   function applyEditorTheme() {
     const t = getEditorTheme(), f = getEditorFont(), fs = state.editorSettings.fontSize;
     let styleTag = $('dt-editor-theme-style');
@@ -522,7 +461,6 @@
     if (sysTheme) sysTheme.style.display = appearance === 'custom' ? 'none' : '';
   }
 
-  // ─── Layout (side + width) ────────────────────────────────────────────────────
   function applyLayout(animate) {
     applySidebarTheme();
     const { side, width } = state.layout;
@@ -558,14 +496,11 @@
       // Tab chevron direction
       const chevron = $('dt-tab-chevron');
       if (chevron) chevron.style.transform = isLeft ? 'scaleX(-1)' : '';
-      // Tab offset when open — animate only during open/close toggle, not drag
-      // or side-switch. The offset is a TRANSFORM (not left/right): the sidebar
-      // slides with a composited transform, so the tab must too, or the two run
-      // on different threads (compositor vs main-thread layout) and visibly
-      // drift apart whenever the host page is busy.
+      // Tab offset is a transform (not left/right) so it slides on the compositor
+      // in step with the sidebar; animate only on open/close, not drag/side-switch.
       if (animate) {
         tab.classList.add('dt-tab-animate');
-        // Remove after transition completes so drag doesn't get the slow transition
+        // Remove after transition so drag doesn't get the slow transition
         clearTimeout(tab._animTimeout);
         tab._animTimeout = setTimeout(() => tab.classList.remove('dt-tab-animate'), 350);
       }
@@ -580,11 +515,8 @@
       handle.style.right = isLeft ? '0' : 'auto';
     }
 
-    // Base URL FAB — keep it off the sidebar. The FAB lives at the bottom-right;
-    // an open right-side sidebar would sit on top of it, so slide it left to rest
-    // just past the sidebar's inner edge (the CSS `right` transition animates it
-    // in step with the panel). A left-side or closed sidebar never overlaps the
-    // bottom-right corner, so it returns to its default 24px inset.
+    // Base URL FAB: an open right-side sidebar would cover the bottom-right FAB,
+    // so slide it left past the sidebar's edge; otherwise it stays at its inset.
     const fab = $('dt-baseurl-fab');
     if (fab) {
       const pushLeft = state.sidebarOpen && !isLeft;
@@ -628,7 +560,6 @@
     });
   }
 
-  // ─── Keyboard shortcuts settings ──────────────────────────────────────────────
   // Reflect current combos into the settings rows. Safe to call before the panel
   // exists (used by cross-tab storage sync) — it no-ops if the DOM isn't there.
   function syncKeybindUI() {
@@ -730,7 +661,6 @@
       pmKey.placeholder = 'API Recorder plugin not installed';
     }
 
-    // ── Position & drag ──────────────────────────────────────────────────────────
     $$('.dt-side-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const tab = $('dt-tab');
@@ -754,7 +684,6 @@
       handle.addEventListener('mousedown', e => { startX=e.clientX; startW=state.layout.width; document.body.style.userSelect='none'; document.body.style.cursor='ew-resize'; document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp); e.preventDefault(); });
     }
 
-    // ── Width slider + stepper + input ───────────────────────────────────────────
     function setLayoutWidth(w) {
       w = Math.max(280, Math.min(720, Math.round(w / 4) * 4));
       state.layout.width = w; Store.set('layout.width', w);
@@ -769,7 +698,6 @@
     if(wdDec) wdDec.addEventListener('click',()=>setLayoutWidth(state.layout.width-4));
     if(wdInc) wdInc.addEventListener('click',()=>setLayoutWidth(state.layout.width+4));
 
-    // ── Appearance mode tabs ─────────────────────────────────────────────────────
     $$('.dt-appearance-tab').forEach(btn => {
       btn.addEventListener('click', () => {
         const prev = state.layout.appearance;
@@ -814,7 +742,6 @@
     // Auto mode: listen for system color scheme change
     window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change',()=>{ if(state.layout.appearance==='auto') applySidebarTheme(); });
 
-    // ── Editor theme grid ────────────────────────────────────────────────────────
     // Editor settings commit immediately on change — same behavior as the
     // appearance/layout controls; there is no staging + Apply step anymore.
     function commitEditorSettings(patch) {
@@ -840,10 +767,8 @@
       commitEditorSettings(patch);
     });
 
-    // ── Font list (styled per-font) ──────────────────────────────────────────────
     buildFontList('dt-sb-font-list', fId => commitEditorSettings({ font: fId }));
 
-    // ── Font size slider + stepper + input ───────────────────────────────────────
     function setSizeVal(v) {
       v = Math.max(9, Math.min(18, parseInt(v)||12));
       const sl=$('dt-sb-size-slider'), vi=$('dt-sb-size-val');
@@ -857,7 +782,6 @@
     if(sdDec) sdDec.addEventListener('click',()=>setSizeVal(state.editorSettings.fontSize-1));
     if(sdInc) sdInc.addEventListener('click',()=>setSizeVal(state.editorSettings.fontSize+1));
 
-    // ── Editor custom colors ─────────────────────────────────────────────────────
     bindColorInputs('dt-sb-bg',   v => commitEditorSettings({ customBg: v }));
     bindColorInputs('dt-sb-text', v => commitEditorSettings({ customText: v }));
     syncColorInputsToState('dt-sb-bg',   state.editorSettings.customBg);
@@ -867,7 +791,6 @@
     const eccDiv = $('dt-sb-editor-custom-colors');
     if(eccDiv) eccDiv.style.display = state.editorSettings.theme === 'custom' ? '' : 'none';
 
-    // ── Reset (settings apply instantly on change; the Apply button is gone) ────
     const resetBtn = $('dt-sb-settings-reset');
     if(resetBtn) resetBtn.addEventListener('click', () => {
       commitEditorSettings({ theme:'catppuccin', font:'ibm', fontSize:12, customBg:'', customText:'' });
@@ -915,7 +838,6 @@
     }
   }
 
-  // ─── Reusable: build theme grid & font list ───────────────────────────────────
   function buildThemeGrid(containerId, onChange) {
     const grid = $(containerId); if (!grid) return;
     grid.innerHTML = '';
@@ -975,7 +897,6 @@
     });
   }
 
-  // ─── Reusable: bind color picker + hex input + clear ─────────────────────────
   function bindColorInputs(prefix, onchange) {
     const picker = $(`${prefix}-picker`), hexEl = $(`${prefix}-hex`), clearBtn = $(`${prefix}-clear`);
     picker.addEventListener('input', () => { hexEl.value = picker.value; onchange(picker.value); });
@@ -992,20 +913,15 @@
     if (picker && value) picker.value = value;
   }
 
-  // ─── Bind UI ─────────────────────────────────────────────────────────────────
   function bindUI() {
     $('dt-tab').addEventListener('click', toggleSidebar);
     $('dt-close-btn').addEventListener('click', closeSidebar);
 
-    // Global intercept hotkeys — capture phase so they fire even when a page
-    // element (or the intercept modal's editor) has focus, and before the host
-    // page can swallow the event. Only preventDefault/stopPropagation when a
-    // combo actually matches one of ours (see handleGlobalHotkey), so unrelated
-    // page shortcuts are left untouched.
+    // Global intercept hotkeys in capture phase so they fire even when a page
+    // element has focus; handleGlobalHotkey only preventDefaults on our combos.
     document.addEventListener('keydown', handleGlobalHotkey, true);
     document.addEventListener('keyup', handleGlobalHotkeyUp, true);
-    // If focus leaves the page mid-hold (e.g. Alt-Tab), the keyup may never
-    // arrive — end the hold defensively so intercept doesn't get stuck on.
+    // Blur ends any hold defensively (Alt-Tab can eat the keyup).
     realWindow.addEventListener('blur', endHold);
 
     // Edit Memory management (Network panel)
@@ -1013,14 +929,9 @@
     if (memClear) memClear.addEventListener('click', clearEditMemory);
     renderEditMemoryList();
 
-    // Portal tooltip — the tip text is rendered into #dt-tip-portal appended
-    // directly to <html>, OUTSIDE #dt-sidebar. The sidebar has a `transform`
-    // (translateX for the slide animation), which makes position:fixed resolve
-    // against the sidebar's box instead of the viewport — so the old inline
-    // tooltip was pushed off-screen whenever the sidebar sat on the right. A
-    // portal at document root has no transformed ancestor, so fixed positioning
-    // is true viewport-relative and works on either side. Delegated mouseover/
-    // mouseout also covers tips added later by plugins.
+    // Portal tooltip rendered into #dt-tip-portal outside #dt-sidebar: the
+    // sidebar's `transform` makes position:fixed resolve against its own box, so
+    // an inline tip goes off-screen. A portal at root has no transformed ancestor.
     let tipPortal = $('dt-tip-portal');
     if (!tipPortal) {
       tipPortal = document.createElement('div');
@@ -1050,11 +961,8 @@
       tipPortal.style.left = left + 'px';
       tipPortal.style.top  = top + 'px';
     }
-    // Scope the hover listeners to our own roots (sidebar + modal overlays)
-    // rather than `document`. Every `.dt-tip` lives inside one of these, and
-    // mouseover/mouseout otherwise fire for EVERY element the cursor crosses on
-    // the host page — pure overhead on a script that loads on every site. Bound
-    // to the containers, the handler only runs while the cursor is over our UI.
+    // Scope hover listeners to our own roots, not `document`, so mouseover/out
+    // don't fire for every element the cursor crosses on the host page.
     ['dt-sidebar','dt-req-overlay','dt-res-overlay','dt-presets-overlay','dt-save-preset-overlay']
       .map(id => $(id)).filter(Boolean).forEach(root => {
         root.addEventListener('mouseover', e => {
@@ -1068,17 +976,12 @@
       });
 
     document.addEventListener('click', e => {
-      // Fires for every click on the host page. When the sidebar is closed (the
-      // overwhelmingly common state) there's nothing to close — bail before doing
-      // any DOM lookups or classList/contains checks.
-      if (!state.sidebarOpen) return;
+      if (!state.sidebarOpen) return; // fires for every host-page click; bail early
       const sb=$('dt-sidebar'), tab=$('dt-tab');
-      // Only close sidebar on outside click if no modal is open — matched by
-      // class so plugin-created overlays (e.g. Form Autofill's config modal,
-      // which isn't part of the static HTML template) count too.
+      // Only close on outside click if no modal is open (class-matched so
+      // plugin-created overlays count too).
       const anyModalOpen = !!$1('.dt-overlay.visible');
-      // Under shadow DOM a click inside our UI retargets `e.target` to the host,
-      // so use composedPath()[0] — the true innermost node — for the hit tests.
+      // Shadow DOM retargets e.target to the host — use composedPath()[0].
       const t = (e.composedPath && e.composedPath()[0]) || e.target;
       if (!anyModalOpen && sb && !sb.contains(t) && !tab.contains(t) && !(t.closest && t.closest('#dt-rec-kebab-portal'))) closeSidebar();
     }, true);
@@ -1088,8 +991,7 @@
       $$('.dt-nav-btn').forEach(b => b.classList.remove('active'));
       $$('.dt-panel').forEach(p => p.classList.remove('active'));
       const btn = $1(`.dt-nav-btn[data-panel="${panelName}"]`);
-      // The nav scrolls horizontally (6+ tabs overflow narrow sidebars) — keep
-      // the selected tab in view.
+      // Nav scrolls horizontally — keep the selected tab in view.
       if (btn) { btn.classList.add('active'); btn.scrollIntoView && btn.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
       const panel = $('dt-panel-' + panelName);
       if (panel) panel.classList.add('active');
@@ -1097,10 +999,8 @@
       if (gearBtn) gearBtn.classList.toggle('active', panelName === 'settings');
     }
     $$('.dt-nav-btn').forEach(btn => btn.addEventListener('click', () => switchToPanel(btn.dataset.panel)));
-    // The nav overflows horizontally once plugins add their tabs, but a mouse
-    // wheel over it only jiggled the strip vertically (see the .dt-nav
-    // overflow-y note in the CSS) — translate vertical wheel motion into a
-    // horizontal slide. Trackpad horizontal pans (deltaX) keep native behavior.
+    // Translate vertical wheel motion over the nav into a horizontal slide;
+    // trackpad horizontal pans (deltaX) keep native behavior.
     const navStrip = $1('.dt-nav');
     if (navStrip) navStrip.addEventListener('wheel', e => {
       if (navStrip.scrollWidth <= navStrip.clientWidth) return;
@@ -1110,8 +1010,7 @@
     }, { passive: false });
     const settingsBtn = $('dt-settings-btn');
     if (settingsBtn) settingsBtn.addEventListener('click', () => switchToPanel('settings'));
-    // The About panel has no nav button — previously it was dead, unreachable
-    // markup. The header icon/title now opens it.
+    // The About panel has no nav button; the header icon/title opens it.
     const headIcon = $1('#dt-sidebar .dt-head-icon');
     const headTitle = $1('#dt-sidebar .dt-head-title');
     [headIcon, headTitle].forEach(el => {
@@ -1121,19 +1020,14 @@
       el.addEventListener('click', () => switchToPanel('about'));
     });
 
-    // ── Network filters: a Global block ('net') that writes to BOTH req & res,
-    // plus independent 'req' and 'res' blocks. state.req.* / state.res.* have
-    // always been stored separately; 'net' is a UI convenience that mirrors into
-    // both. shouldIntercept() already reads each namespace's own values, so the
-    // request and response interceptors can now use different method sets and
-    // regexes. See buildFilterBlock() in Devtools_html.js.
+    // Network filters: a Global block ('net') that mirrors into both req & res,
+    // plus independent 'req'/'res' blocks (stored separately in state).
     ['net', 'req', 'res'].forEach(bindFilterNs);
     $$('.dt-disclosure-hd').forEach(hd =>
       hd.addEventListener('click', () => hd.closest('.dt-disclosure').classList.toggle('open')));
     ['net', 'req', 'res'].forEach(applyFilterToUI);
     updateFilterHints();
 
-    // ── Request interceptor enable/persist ────────────────────────────────────
     $('dt-req-enabled').addEventListener('change', e => {
       state.req.enabled = e.target.checked;
       if (state.req.persist) Store.set('req.enabled', state.req.enabled);
@@ -1146,7 +1040,6 @@
       syncNetworkPanel();
     });
 
-    // ── Mock failure response (drives the request modal's "Mock Fail") ────────
     const mockStatusIn = $('dt-req-mock-status');
     if (mockStatusIn) mockStatusIn.addEventListener('input', e => {
       const n = parseInt(e.target.value, 10);
@@ -1161,7 +1054,6 @@
       updateMockFailureHint();
     });
 
-    // ── Response interceptor enable/persist ───────────────────────────────────
     $('dt-res-enabled').addEventListener('change', e => {
       state.res.enabled = e.target.checked;
       if (state.res.persist) Store.set('res.enabled', state.res.enabled);
@@ -1287,7 +1179,6 @@
     $('dt-res-code-editor').addEventListener('input', () => updateTransformPreview());
   }
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────────
   function switchResTab(mode) {
     $$('.dt-res-tab').forEach(t=>t.classList.remove('active'));
     $1(`.dt-res-tab[data-restab="${mode}"]`).classList.add('active');
@@ -1403,7 +1294,6 @@
     applyLayout(true);
   }
 
-  // ── Network filter helpers (global 'net' + independent 'req'/'res') ─────────
   function setRegexDot(dot, val) {
     if (!dot) return;
     if (!val) { dot.className = 'dt-regex-dot'; return; }
@@ -1525,7 +1415,6 @@
     updateModalCounts();
   }
 
-  // ─── Editor helpers ───────────────────────────────────────────────────────────
   // jump=false here: re-running search on every keystroke keeps highlights/count
   // accurate as matches shift, but must NOT move the caret away from wherever
   // the user is actually typing (that's a content edit, not a search action).
@@ -1539,7 +1428,6 @@
   }
   function syncOvScroll(id) { const ed=$(id),ov=$(`${id}-hl`); if(ov&&ed){ov.scrollTop=ed.scrollTop;ov.scrollLeft=ed.scrollLeft;} }
 
-  // ─── Search ───────────────────────────────────────────────────────────────────
   function openSearch(id) { $(`${id}-sbar`).classList.remove('hidden'); $(`${id}-stoggle`).classList.add('active'); const inp=$(`${id}-sinput`);inp.focus();inp.select(); }
   function closeSearch(id,sk) { $(`${id}-sbar`).classList.add('hidden'); $(`${id}-stoggle`).classList.remove('active'); state[sk]={term:'',matchIndex:0,matches:[]}; renderHL(id,sk,''); const c=$(`${id}-scount`);if(c){c.textContent='—';c.className='dt-search-count';} }
   function toggleSearch(id) { const bar=$(`${id}-sbar`); const sk=id.startsWith('dt-req')?'reqSearch':'resSearch'; bar.classList.contains('hidden')?openSearch(id):closeSearch(id,sk); }
@@ -1550,18 +1438,12 @@
   function updateSCount(id,sk) { const c=$(`${id}-scount`);if(!c)return;const n=state[sk].matches.length;if(!state[sk].term||n===0){c.textContent=n===0&&state[sk].term?'0 results':'—';c.className='dt-search-count';}else{c.textContent=`${state[sk].matchIndex+1}/${n}`;c.className='dt-search-count found';} }
   function scrollToMatch(id,sk) { const ed=$(id);if(!ed||!state[sk].matches.length)return;const pos=state[sk].matches[state[sk].matchIndex];const lh=parseFloat(getComputedStyle(ed).lineHeight)||20;const lines=ed.value.slice(0,pos).split('\n').length-1;ed.scrollTop=Math.max(0,lines*lh-ed.clientHeight/2);ed.setSelectionRange(pos,pos+state[sk].term.length);syncOvScroll(id); }
 
-  // ─── GET Params ───────────────────────────────────────────────────────────────
   function addParamRow(listId,key,val) { const list=$(listId);const row=document.createElement('div');row.className='dt-param-row';row.innerHTML=`<input class="dt-param-input" placeholder="key" value="${escHtml(key)}" data-role="key"><span class="dt-param-eq">=</span><input class="dt-param-input" placeholder="value" value="${escHtml(val)}" data-role="val"><button class="dt-param-dup" title="Duplicate row">${icon('copy',13,1.8)}</button><button class="dt-param-del" title="Remove row">${icon('x',13,2.2)}</button>`;row.querySelector('.dt-param-del').addEventListener('click',()=>row.remove());row.querySelector('.dt-param-dup').addEventListener('click',()=>{const k=row.querySelector('[data-role=key]').value;const v=row.querySelector('[data-role=val]').value;const newRow=row.cloneNode(true);newRow.querySelector('[data-role=key]').value=k;newRow.querySelector('[data-role=val]').value=v;newRow.querySelector('.dt-param-del').addEventListener('click',()=>newRow.remove());newRow.querySelector('.dt-param-dup').addEventListener('click',function(){const k2=newRow.querySelector('[data-role=key]').value;const v2=newRow.querySelector('[data-role=val]').value;addParamRow(listId,k2,v2);});row.after(newRow);});list.appendChild(row); }
   // Suggested rows are excluded — they're inert until the user clicks "+ Add".
   function buildEditedUrl(originalUrl,listId) { try{const u=new URL(originalUrl.startsWith('http')?originalUrl:'https://x.com'+originalUrl);u.search='';$$(`#${listId} .dt-param-row:not(.dt-param-row-suggested)`).forEach(r=>{const k=r.querySelector('[data-role=key]').value.trim(),v=r.querySelector('[data-role=val]').value;if(k)u.searchParams.append(k,v);});return originalUrl.startsWith('http')?u.toString():u.pathname+u.search;}catch{return originalUrl;} }
 
-  // ─── API Docs cross-check (request interceptor) ────────────────────────────────
-  // Cross-checks a pending request against whatever the API Recorder plugin has
-  // already documented for that endpoint, and surfaces documented fields that
-  // are missing from the current payload — greyed-out param rows for GET,
-  // click-to-add chips below the editor for everything else. Purely additive:
-  // if the Recorder plugin isn't installed or has no docs for this endpoint,
-  // none of this renders anything.
+  // Surfaces fields the API Recorder plugin documented for this endpoint that are
+  // missing from the payload. Purely additive: renders nothing without recorder docs.
   function addSuggestedParamRow(listId, key, val) {
     const list = $(listId);
     const row = document.createElement('div');
@@ -1569,9 +1451,8 @@
     row.dataset.suggestKey = key;
     row.innerHTML = `<input class="dt-param-input" value="${escHtml(key)}" data-role="key" disabled><span class="dt-param-eq">=</span><input class="dt-param-input" value="${escHtml(val)}" data-role="val" disabled><button class="dt-param-add-suggested" title="Add to request">+ Add</button>`;
     row.querySelector('.dt-param-add-suggested').addEventListener('click', () => {
-      // addParamRow always appends at the end of the list — swap the new real
-      // row into the suggested row's own slot instead, so activating one
-      // suggestion doesn't jump below any suggestions still pending below it.
+      // addParamRow appends at the end — swap the new row into the suggested
+      // row's slot so it doesn't jump below still-pending suggestions.
       addParamRow(listId, key, val);
       const newRow = list.lastElementChild;
       row.replaceWith(newRow);
@@ -1645,7 +1526,6 @@
     });
   }
 
-  // ─── Headers ─────────────────────────────────────────────────────────────────
   function populateHeaders(innerId, countId, obj, revertBtnId) {
     const inner=$(innerId), count=$(countId);
     inner.innerHTML='';
@@ -1694,7 +1574,6 @@
     return headers;
   }
 
-  // ─── Response tree (GUI) ──────────────────────────────────────────────────────
   let currentResPath = [];
   function buildResTree(bodyStr) {
     const tree=$('dt-res-tree'); if(!tree) return;
@@ -1724,7 +1603,6 @@
   function selectPath(path){currentResPath=path;const display=$('dt-res-path-display');if(display)display.textContent='data.'+path.join('.');$$('.dt-tree-node').forEach(n=>n.classList.remove('selected'));}
   function getByPath(obj,pathStr){if(!pathStr||pathStr==='—')return obj;const parts=pathStr.replace(/^data\./,'').split('.');let cur=obj;for(const p of parts){if(cur===null||cur===undefined)return undefined;cur=cur[p];}return cur;}
 
-  // ─── Presets management ───────────────────────────────────────────────────────
   function syncAutoTransformUI() {
     const atToggle = $('dt-res-auto-transform');
     if (atToggle) atToggle.checked = state.res.autoTransform;
@@ -1738,7 +1616,6 @@
     }
   }
 
-  // ─── Preset save/edit panel ───────────────────────────────────────────────────
   let _editingPresetIdx = null; // null = new, number = editing
 
   function stripQueryParams(url) {
@@ -1990,7 +1867,6 @@
     }
   }
 
-  // ─── Modal helpers ────────────────────────────────────────────────────────────
   function bindModalActions(sendId, abortId, onSend, onAbort) {
     const ns = $(sendId).cloneNode(true), na = $(abortId).cloneNode(true);
     $(sendId).replaceWith(ns); $(abortId).replaceWith(na);
@@ -1998,7 +1874,6 @@
     na.addEventListener('click', onAbort);
   }
 
-  // ─── cURL helpers ────────────────────────────────────────────────────────────
   function buildCurlCommand(req, isGET, editedUrl) {
     const url = isGET ? editedUrl : req.url;
     const method = req.method;
@@ -2036,14 +1911,9 @@
     });
   }
 
-  // ─── Request Modal ────────────────────────────────────────────────────────────
-  // ─── Modal coordinator ────────────────────────────────────────────────────────
-  // Request & response modals share one gate: an OPEN modal is never preempted.
-  // New intercepts only enqueue (badges/counters update); whenever a modal
-  // closes — or something arrives while idle — the next item is surfaced,
-  // responses first: a held response belongs to a request the user already
-  // approved and may be the only thing blocking the page on sequential sites,
-  // while for parallel bursts (Promise.all) the order is neutral anyway.
+  // Request & response modals share one gate: an open modal is never preempted;
+  // new intercepts only enqueue. On close/idle the next item surfaces, responses
+  // first (a held response blocks a request the user already approved).
   // FIFO within each type.
   function anyInterceptModalOpen() {
     const rq = $('dt-req-overlay'), rs = $('dt-res-overlay');
@@ -2211,7 +2081,6 @@
     }
   }
 
-  // ─── Response Modal ───────────────────────────────────────────────────────────
   function showResModal(res) {
     const ov=$('dt-res-overlay');
     state.currentRes=res;
@@ -2245,14 +2114,9 @@
     );
   }
 
-  // ─── Edit Memory: diff → classify → apply ─────────────────────────────────────
-  // Records what changed between the original body and the user's edited body,
-  // classifies each change (add/remove/rename/type-transform/value), remembers it
-  // in localStorage, and offers a one-click button to replay the same change on
-  // the current data. Structural ops (add/remove/rename) generalize cleanly; type
-  // transforms are re-derived from the CURRENT value (e.g. re-split a string),
-  // and are only recognized when the before/after matches a known operation.
-
+  // Records/classifies what changed between original and edited body
+  // (add/remove/rename/type-transform/value) into localStorage for one-click
+  // replay. Type transforms are re-derived from the current value.
   function jType(v) { if (Array.isArray(v)) return 'array'; if (v === null) return 'null'; return typeof v; }
   function deepEqual(a, b) {
     if (a === b) return true;
@@ -2422,7 +2286,6 @@
     catch { return String(url||'').split('?')[0].split('#')[0]; }
   }
 
-  // ── Suggestion chips inside the intercept modals ──────────────────────────────
   function renderEditSuggestions(ns) {
     const cont=$(ns==='req'?'dt-req-edit-suggest':'dt-res-edit-suggest');
     if (!cont) return;
@@ -2456,7 +2319,6 @@
     renderEditSuggestions(ns);
   }
 
-  // ── Management list (Network panel) ───────────────────────────────────────────
   function memTimeAgo(ts) { const s=Math.max(0,Math.round((Date.now()-ts)/1000)); if (s<60) return s+'s ago'; const m=Math.round(s/60); if (m<60) return m+'m ago'; const h=Math.round(m/60); if (h<24) return h+'h ago'; return Math.round(h/24)+'d ago'; }
   function renderEditMemoryList() {
     const list=$('dt-edit-mem-list'); if (!list) return;
@@ -2510,20 +2372,11 @@
     return hosts;
   }
 
-  // ─── Framework-internal request detection ─────────────────────────────────────
-  // Next.js (App Router) drives navigation, prefetch, and Server Actions through
-  // its OWN fetch calls, marked with these request headers. They are NOT the
-  // page's API calls — a Server Action POSTs to the current page URL and expects
-  // a streamed `text/x-component` RSC payload back, so intercepting/holding/
-  // mocking one corrupts Next's client runtime (seen as "requestData is null").
-  // We pass them straight through, untouched and uncaptured, so the interceptor
-  // only ever acts on the app's real data requests. Matched on headers (works
-  // for both the fetch and XHR paths); response-side RSC is also skipped by
-  // content-type below.
+  // Next.js (App Router) navigation/prefetch/Server Actions ride on its own fetch
+  // calls marked by these headers, not the page's API calls; intercepting them
+  // corrupts Next's runtime ("requestData is null"), so we pass them through.
   const FRAMEWORK_REQ_HEADERS = ['rsc','next-router-prefetch','next-router-state-tree','next-action','next-url'];
-  // Read a header value case-insensitively from either a Headers instance or a
-  // plain object, so the value-based signals below work on both fetch and XHR
-  // header shapes. Returns '' when absent.
+  // Read a header case-insensitively from a Headers instance or plain object; '' if absent.
   function readHeader(headers, name) {
     try {
       if (headers instanceof realWindow.Headers) return headers.get(name) || '';
@@ -2534,12 +2387,9 @@
     } catch {}
     return '';
   }
-  // A "framework internal" request is one Next.js's client runtime issues and
-  // consumes itself (RSC/Server Action/prefetch), marked by the headers above.
-  // Intercepting/holding/mutating one corrupts Next's runtime ("requestData is
-  // null"), so these skip the intercept path entirely. Detection is header-only
-  // and unchanged — the request-modification flow for everything else is exactly
-  // as it was.
+  // A "framework internal" request (Next.js RSC/Server Action/prefetch, marked by
+  // FRAMEWORK_REQ_HEADERS) corrupts Next's runtime if mutated ("requestData is
+  // null"), so these skip the intercept path entirely.
   function isFrameworkInternalReq(headers) {
     if (!headers) return false;
     try {
@@ -2551,12 +2401,9 @@
     } catch {}
     return false;
   }
-  // Broader check used ONLY to disable Mock Fail (never to skip interception).
-  // A request that expects a streamed text/x-component (RSC) or an HTML document
-  // — an RSC navigation (`?_rsc=`), an RSC/prefetch fetch, or a navigation/
-  // prefetch request — crashes the page if answered with a fabricated JSON
-  // failure. Such requests still go through the normal modal and stay fully
-  // editable; only the "Mock Fail" button is turned off for them.
+  // Used ONLY to disable Mock Fail (never to skip interception): a request
+  // expecting RSC (text/x-component) or an HTML document crashes the page if
+  // answered with a fabricated JSON failure. It stays fully editable otherwise.
   function isMockUnsafeReq(url, headers) {
     try { if (url && /[?&]_rsc=/.test(url)) return true; } catch {}
     if (isFrameworkInternalReq(headers)) return true;
@@ -2569,25 +2416,20 @@
     return false;
   }
 
-  // ─── Intercept checks ─────────────────────────────────────────────────────────
   function shouldIntercept(ns,url,method){
-    // Plugins can veto interception entirely (e.g. Bench, while a benchmark run
-    // is in flight — its own fetch calls must never be edited/queued).
+    // Plugins can veto interception (e.g. Bench, while a run is in flight).
     if (plugins.some(p => p.suppressIntercept && p.suppressIntercept())) return false;
     const s=state[ns];if(!s.enabled)return false;if(!s.methods.includes(method.toUpperCase()))return false;if(s.mode==='manual'&&s.urlRegex){try{return new RegExp(s.urlRegex).test(url);}catch{return false;}}return true;
   }
   function shouldInterceptReq(url,method){return shouldIntercept('req',url,method);}
   function shouldInterceptRes(url,method){return shouldIntercept('res',url,method);}
 
-  // ─── Keyboard shortcuts (quick intercept toggles) ─────────────────────────────
-  // Each entry is a hotkey the user can trigger from anywhere on the page. The
-  // labels/hints are reused verbatim by the Settings > Keyboard Shortcuts UI.
+  // Hotkeys triggerable from anywhere; labels reused by the Settings UI.
   const KEYBIND_DEFS = [
     { id:'toggleBoth',    label:'Toggle Intercept (Request + Response)', def:'Alt+Q' },
     { id:'toggleReq',     label:'Toggle Request Intercept',              def:'Alt+W' },
     { id:'toggleRes',     label:'Toggle Response Intercept',             def:'Alt+A' },
-    // Momentary: interception is forced on only while the combo is held down,
-    // then reverts — the enable toggles are never changed. See beginHold/endHold.
+    // Momentary: interception is forced on only while held (see beginHold/endHold).
     { id:'holdIntercept', label:'Hold to Intercept',                     def:'Alt+S', hold:true },
   ];
 
@@ -2649,7 +2491,6 @@
     }
   }
 
-  // ── Momentary "hold to intercept" ─────────────────────────────────────────────
   // While held, force BOTH interceptors on without persisting; on release, put
   // enabled flags back exactly as they were. Triggered by a hold-type keybind
   // (key held down) or by pressing-and-holding the Network panel's Hold button.
@@ -2703,7 +2544,6 @@
     if (_holdState.comboParts.includes(releasedKeyName(e))) endHold();
   }
 
-  // ─── Toast (hotkey feedback) ──────────────────────────────────────────────────
   // Self-contained colors (not theme tokens) so it reads on any host page. Kept
   // out of #dt-sidebar because that element carries a transform and can sit
   // off-screen; the toast lives at the document root instead.
@@ -2722,27 +2562,20 @@
 
   function queueReq(url,method,headers,body){return new Promise((resolve,reject)=>{const req={url,method,headers,body,resolve,reject};state.pendingReqs.push(req);updateQueueUI('req');showNextModal();});}
 
-  // ─── Mock failure response ("Mock Fail" in the request modal) ─────────────────
-  // Instead of terminating an intercepted request (Abort → the page sees a
-  // network error), Mock Fail answers it with a fabricated failure response.
-  // Body resolution, most specific first: matching Base URL entry override →
-  // that entry's group override → the global default from the Network panel →
-  // built-in fallback. An entry matches when its host equals the request's host.
+  // Mock Fail answers an intercepted request with a fabricated failure response.
+  // Body resolution, most specific first: matching Base URL entry → its group →
+  // global default → built-in fallback (match = entry host equals request host).
   const MOCK_FAIL_FALLBACK_BODY = '{"success":false,"error":"Request failed (mocked by DevTools)"}';
   const MOCK_STATUS_TEXT = {400:'Bad Request',401:'Unauthorized',403:'Forbidden',404:'Not Found',408:'Request Timeout',409:'Conflict',422:'Unprocessable Entity',429:'Too Many Requests',500:'Internal Server Error',502:'Bad Gateway',503:'Service Unavailable',504:'Gateway Timeout'};
-  // Clamp to [200,599]: the Response constructor (fetch path) rejects anything
-  // outside that range, and sub-200 "statuses" aren't meaningful for mocking a
-  // finished HTTP response anyway.
+  // Clamp to [200,599]: the Response constructor rejects anything outside it.
   function mockFailStatus() {
     const n = parseInt(state.req.mockStatus, 10);
     return (n >= 200 && n <= 599) ? n : 500;
   }
   // 204/205/304 forbid a body — the Response constructor throws if you pass one.
   const NULL_BODY_STATUSES = new Set([204, 205, 304]);
-  // Build the fetch Response for a mock WITHOUT ever throwing. A raw
-  // `new Response(body,{status})` throws on null-body statuses and out-of-range
-  // codes; an uncaught throw here rejects the whole fetch, so the page sees a
-  // network error / null instead of the mocked response the user configured.
+  // Build a mock Response without throwing: raw `new Response` throws on
+  // null-body statuses / out-of-range codes, which would reject the whole fetch.
   function buildMockFetchResponse(m) {
     const body = NULL_BODY_STATUSES.has(m.status) ? null : m.body;
     try {
@@ -2775,11 +2608,9 @@
     if (!body) body = (state.req.mockBody || '').trim() || MOCK_FAIL_FALLBACK_BODY;
     return { status, statusText: MOCK_STATUS_TEXT[status] || 'Error', body, headers: { 'content-type': 'application/json' } };
   }
-  // A mock body that isn't valid JSON reads back as `null` for any consumer
-  // using JSON parsing (fetch .json(), XHR responseType:'json', axios's default
-  // JSON transform) — since we serve it with content-type: application/json.
-  // That's the most common "the mocked response was null" cause, so flag it in
-  // the UI (warn, don't block — a user may deliberately mock non-JSON).
+  // We serve mocks as application/json, so a non-JSON body reads back as null for
+  // any JSON consumer — the most common "mocked response was null" cause. Warn
+  // (don't block: a user may deliberately mock non-JSON).
   function updateMockFailureHint() {
     const el = $('dt-req-mock-hint');
     const body = (state.req.mockBody || '').trim();
@@ -2817,54 +2648,37 @@
     return new Promise(resolve=>{const res={url,method,status,statusText,headers,body,resolve};state.pendingRes.push(res);updateQueueUI('res');showNextModal();});
   }
 
-  // ─── Patch fetch (robust with re-patching) ────────────────────────────────────
   let _fetch = null;       // what the outermost patch forwards to (may be a later site wrapper)
-  let _nativeFetch = null; // the true native fetch, captured once at the FIRST patch and never replaced
-  // Re-entrancy marker for the double-wrap case (see the guard in patchedFetch).
-  // A WeakSet — NOT a property written onto the caller's Request/init — because
-  // frameworks that wrap fetch (Next.js, Sentry) key their own per-request
-  // metadata off the exact request/init object identity (and off non-enumerable
-  // props). Mutating or shallow-copying those objects made their lookup miss
-  // (e.g. Next.js threw "requestData is null" reading `.body`). We only ever ADD
-  // objects we forward, then remove them once the downstream call settles.
+  let _nativeFetch = null; // the true native fetch, captured once at the FIRST patch
+  // Re-entrancy marker for the double-wrap case (WeakSet, not a property on the
+  // caller's Request/init: frameworks like Next.js/Sentry key per-request metadata
+  // off object identity, so mutating/copying those objects breaks their lookup).
   const _dtSeen = new WeakSet();
   function setupFetchPatch() {
-    if (!realWindow.fetch) return; // fetch not available yet
-    // Already our patched fetch — nothing to do. Re-wrapping fetch every tick
-    // (even with an identical implementation) trips bot-management scripts
-    // (e.g. Cloudflare) that watch for repeated fetch reassignment as a
-    // tamper signal, causing endless challenge/verification loops.
+    if (!realWindow.fetch) return;
+    // Re-wrapping fetch every tick trips bot-management scripts (Cloudflare) that
+    // watch for repeated fetch reassignment as a tamper signal.
     if (realWindow.fetch._dt_patched) return;
-    // Only capture the native fetch if we haven't patched yet, or if the current
-    // window.fetch is not our patched version (e.g. another script replaced it).
-    // Never overwrite _fetch with our own wrapper — that causes infinite recursion.
-    // Bind to the real window: _fetch is called detached (`_fetch(url)`), and an
-    // unbound native fetch throws "TypeError: Illegal invocation" in some browsers.
+    // Capture native fetch only if not yet patched (never overwrite _fetch with
+    // our wrapper — infinite recursion). Bind to realWindow: _fetch is called
+    // detached, and an unbound native fetch throws "Illegal invocation".
     if (!_fetch || !realWindow.fetch._dt_patched) _fetch = realWindow.fetch.bind(realWindow);
     if (!_nativeFetch) _nativeFetch = _fetch;
     try {
       const patchedFetch = async function(input, init = {}) {
           const reqStart = performance.now();
           const isReqObj = input instanceof realWindow.Request;
-          // Re-entrancy guard. Many sites wrap window.fetch AFTER we've patched
-          // it (Sentry, Next.js dev, analytics SDKs); the re-patch tick below
-          // then layers a fresh patch on top of their wrapper, so one page
-          // request flows through TWO patched layers. Without this, every
-          // intercepted request popped its modal twice — after "Send" the same
-          // request immediately re-appeared, and aborting that phantom second
-          // modal surfaced to the page as a fake network error (AbortError).
-          // The outermost layer marks whatever it forwards (see below); inner
-          // layers see the mark and pass straight through — to the NATIVE
-          // fetch, not _fetch: after a re-patch, _fetch points at the site
-          // wrapper that sits in front of this very layer, so forwarding there
-          // would recurse forever.
+          // Re-entrancy guard: sites that wrap fetch after us (Sentry, Next.js
+          // dev) get re-patched on the next tick, so one request flows through two
+          // patched layers and pops its modal twice. The outer layer marks what it
+          // forwards; inner layers see the mark and pass through to NATIVE fetch
+          // (not _fetch, which now points at the site wrapper — would recurse).
           if ((input && typeof input === 'object' && _dtSeen.has(input)) || (init && typeof init === 'object' && _dtSeen.has(init))) {
             return (_nativeFetch || _fetch)(input, isReqObj ? undefined : init);
           }
           const url = typeof input === 'string' ? input : (input?.url || '');
           const method = ((init.method || (isReqObj ? input.method : 'GET')) || 'GET').toUpperCase();
-          // Next.js framework request (RSC/prefetch/Server Action)? Never touch
-          // it — pass straight through with no intercept, no capture.
+          // Next.js framework request? Pass through with no intercept/capture.
           const frameworkInternal = isFrameworkInternalReq(init.headers || (isReqObj ? input.headers : null));
           if (frameworkInternal) return _fetch(input, isReqObj ? undefined : init);
           let actualUrl = url, actualInit = init, intercepted = false;
@@ -2879,14 +2693,12 @@
             else if (init.headers) headers = { ...init.headers };
             else if (isReqObj) input.headers.forEach((v, k) => headers[k] = v);
             const result = await queueReq(url, method, headers, body || '');
-            // "Mock Fail": the request is never sent — the page receives this
-            // fabricated failure response instead (and it deliberately skips
-            // response interception: the user already chose the final body).
+            // "Mock Fail": request is never sent; page gets this fabricated
+            // failure (skips response interception — user already chose the body).
             if (result.mock) {
               const m = result.mock;
-              // The request is answered locally — the script acts as the server
-              // for it. Nothing hits the network, so fan out to capture plugins
-              // (Monitor, ...) so the mocked exchange still shows in the log.
+              // Answered locally, so nothing hits the network — fan out to capture
+              // plugins (Monitor, ...) so the mocked exchange still shows in the log.
               const mockDuration = Math.round(performance.now() - reqStart);
               plugins.forEach(p => {
                 if (p.wantsCapture && p.onResponseCapture && p.wantsCapture(url, method)) {
@@ -2896,29 +2708,21 @@
               });
               return buildMockFetchResponse(m);
             }
-            // result.editedHeaders MUST be applied here — previously both
-            // branches rebuilt actualInit without them, so header edits made
-            // in the intercept modal were silently discarded.
+            // Apply result.editedHeaders in both branches, else modal header edits are lost.
             if (method === 'GET' && result.editedUrl) { actualUrl = result.editedUrl; const gi = { ...init, method: 'GET', headers: result.editedHeaders || headers }; delete gi.body; actualInit = gi; }
             else { actualInit = { ...init, method, headers: result.editedHeaders || headers, body: result.editedBody ?? body }; }
           }
 
-          // CRITICAL: when interception never touched this request (the default,
-          // most-common case — including EVERY request when the feature is
-          // toggled off), pass `input`/`init` straight through completely
-          // unmodified. Previously this unconditionally rebuilt `fetch(requestObj)`
-          // calls as `new Request(url, {})`, silently dropping the original
-          // Request's headers, credentials, body, and mode — breaking auth
-          // (401s) and other behavior on any site using that pattern, regardless
-          // of whether any interceptor was even enabled.
+          // CRITICAL: when interception didn't touch this request (default case,
+          // and every request when disabled), pass input/init through unmodified.
+          // Rebuilding a Request drops its headers/credentials/body/mode (401s).
           let rawInput, fetchInit;
           if (!intercepted) {
             rawInput = input;
             fetchInit = isReqObj ? undefined : init;
           } else if (isReqObj) {
-            // Interception ran — rebuild the Request, but preserve every property
-            // of the ORIGINAL request we're not intentionally changing (headers,
-            // credentials, mode, cache, etc.) instead of dropping them to defaults.
+            // Rebuild the Request, preserving every original property we're not
+            // intentionally changing rather than dropping them to defaults.
             const finalMethod = (actualInit.method || input.method || 'GET').toUpperCase();
             const reqInit = {
               method: finalMethod,
@@ -2941,13 +2745,8 @@
             rawInput = actualUrl;
             fetchInit = actualInit;
           }
-          // Mark the forwarded objects so an inner patched layer (if a site
-          // wrapper sandwiched one — see the re-entrancy guard above) passes
-          // them through untouched instead of intercepting/capturing again.
-          // Done via the WeakSet so we never mutate/copy the caller's objects
-          // (that broke Next.js's per-request metadata). Cleared once the
-          // downstream call settles so a reused init object isn't skipped next
-          // time.
+          // Mark forwarded objects (via the WeakSet) so an inner patched layer
+          // passes them through untouched. Cleared once the call settles.
           const _seenAdded = [];
           try {
             if (rawInput && typeof rawInput === 'object') { _dtSeen.add(rawInput); _seenAdded.push(rawInput); }
@@ -2956,14 +2755,9 @@
           let response;
           try { response = await _fetch(rawInput, fetchInit); }
           finally { _seenAdded.forEach(o => { try { _dtSeen.delete(o); } catch {} }); }
-          // Streaming responses (SSE — chat UIs like claude.ai/ChatGPT stream
-          // everything this way) must NEVER be cloned/read/held: clone().text()
-          // buffers the stream and only resolves when it ENDS (never, for
-          // keep-alive streams), so capturing froze the page and intercepting
-          // hung it outright. Pass them through untouched.
-          // Never hold/clone streaming or RSC responses: SSE (text/event-stream,
-          // used by chat UIs) buffers forever, and text/x-component is Next.js's
-          // RSC payload — reading/replacing it corrupts navigation.
+          // Never clone/read/hold streaming or RSC responses: SSE
+          // (text/event-stream) buffers forever via clone().text(), freezing the
+          // page, and text/x-component is Next.js's RSC payload (reading corrupts nav).
           const _ct = (response.headers.get('content-type') || '').toLowerCase();
           const isEventStream = _ct.includes('text/event-stream') || _ct.includes('text/x-component');
           // Plugin capture (Bench, Recorder, Monitor, ...) — extract request headers properly
@@ -2976,9 +2770,8 @@
             const capBody = typeof actualInit.body === 'string' ? actualInit.body : '';
             const capDuration = Math.round(performance.now() - reqStart);
             const capClone = response.clone();
-            // Fire-and-forget: capture is observational, so don't hold the
-            // page's response hostage while the clone's body downloads — and
-            // read the body/headers ONCE, not once per capturing plugin.
+            // Fire-and-forget: capture is observational, so don't block the page's
+            // response on the clone download; read body/headers once for all plugins.
             (async () => {
               const resHeaders = {}; response.headers.forEach((v,k)=>resHeaders[k]=v);
               let resBody = ''; try { resBody = await capClone.text(); } catch {}
@@ -3006,12 +2799,9 @@
       console.warn('[DevTools] Failed to patch fetch:', e);
     }
   }
-  // Try to setup fetch patch immediately and on injection
   setupFetchPatch();
-  // Re-patch if fetch gets redefined
-  setInterval(setupFetchPatch, 1000);
+  setInterval(setupFetchPatch, 1000); // re-patch if fetch gets redefined
 
-  // ─── Patch XHR ───────────────────────────────────────────────────────────────
   const _open=XMLHttpRequest.prototype.open,_send=XMLHttpRequest.prototype.send,_setHdr=XMLHttpRequest.prototype.setRequestHeader;
   const _addEventListener=XMLHttpRequest.prototype.addEventListener,_removeEventListener=XMLHttpRequest.prototype.removeEventListener;
 
@@ -3034,16 +2824,11 @@
     const method=(this._dt_method||'').toUpperCase(),url=this._dt_url||'',savedHeaders={...(this._dt_headers||{})},self=this;
     const _dtSendStart = performance.now();
 
-    // Next.js framework request (RSC/prefetch/Server Action)? Leave it entirely
-    // alone — no capture, no intercept, no response hold. See isFrameworkInternalReq.
+    // Next.js framework request? Leave it entirely alone (no capture/intercept/hold).
     if (isFrameworkInternalReq(savedHeaders)) { _send.call(this, body); return; }
 
-    // ── Independent plugin capture (e.g. API Recorder / Monitor) ──────────────
-    // Decide up front which plugins actually want THIS url/method, then attach a
-    // single readystatechange listener that reads the response once and fans out
-    // to them. Previously every XHR got one listener PER capture-capable plugin
-    // regardless of whether any wanted the URL, and each re-parsed the response
-    // headers separately — dead work on every XHR the page makes.
+    // One readystatechange listener that reads the response once and fans out to
+    // whichever plugins want this url/method.
     const _capturers = plugins.filter(p => p.wantsCapture && p.onResponseCapture && p.wantsCapture(url, method));
     if (_capturers.length) {
       _addEventListener.call(self,'readystatechange',function pluginCaptureHandler(){
@@ -3110,9 +2895,8 @@
           }
           self._dt_held_listeners={};
         };
-        // A "Mock Fail" answer already IS the final body the user chose —
-        // release the held handlers with it directly instead of opening the
-        // response intercept modal for our own fabricated response.
+        // A Mock Fail answer already IS the final body — release held handlers
+        // with it instead of re-opening the response modal for our own response.
         if(self._dt_skip_res_intercept){finish(self.responseText);return;}
         queueRes(url,method,self.status,self.statusText,rh,self.responseText).then(finish);
       });
@@ -3127,12 +2911,10 @@
   };
   function doXHR(xhr,bodyText,method,savedHeaders){
     queueReq(xhr._dt_url,method,savedHeaders,bodyText).then(result=>{
-      // "Mock Fail": never send — fabricate a completed failure response on the
-      // page's XHR (the script answers it locally, as the server).
+      // "Mock Fail": never send — fabricate a completed failure on the XHR.
       if(result.mock){mockXHRResponse(xhr,result.mock);return;}
-      // Headers on an already-opened XHR can't be replaced — if the user edited
-      // them in the modal, re-open the request and set the edited set instead.
-      // (Previously editedHeaders were ignored entirely on the XHR path.)
+      // Headers on an already-opened XHR can't be replaced; if edited, re-open
+      // the request and set the edited set instead.
       const headers = result.editedHeaders || savedHeaders;
       const headersChanged = JSON.stringify(headers) !== JSON.stringify(savedHeaders);
       if(method==='GET'&&result.editedUrl){
@@ -3148,11 +2930,9 @@
       }
     }).catch(()=>xhr.dispatchEvent(new ProgressEvent('abort')));
   }
-  // Fabricates a completed failed response on an XHR that was never actually
-  // sent ("Mock Fail"). dispatchEvent also invokes on* property handlers, so
-  // pages using either registration style see a normal completion sequence —
-  // and the plugin-capture readystatechange listener fires too, so the mocked
-  // exchange still shows up in the Network Monitor.
+  // Fabricates a completed failed response on an unsent XHR ("Mock Fail").
+  // dispatchEvent also invokes on* handlers, so pages using either registration
+  // style see a normal completion sequence (and capture listeners still fire).
   function mockXHRResponse(xhr, mock) {
     xhr._dt_skip_res_intercept = true; // don't re-open the response modal for our own mock
     const headerStr = Object.entries(mock.headers || {}).map(([k, v]) => `${k}: ${v}`).join('\r\n');
@@ -3174,26 +2954,20 @@
 
   const METHOD_COLORS = { GET:'#0891b2', POST:'#16a34a', PUT:'#2563eb', PATCH:'#7c3aed', DELETE:'#dc2626' };
 
-  // ─── Plugins ──────────────────────────────────────────────────────────────────
-  // Plugin scripts (e.g. Devtools_recorder.js) register a factory with
-  // DT_registerPlugin before this script's IIFE runs (see Devtools_plugins.js).
-  // We invoke each factory now, with a small capability object — this has to
-  // happen down here (rather than right after `state`/`Store` are set up)
-  // because the ctx below intentionally exposes things like METHOD_COLORS,
-  // which aren't initialized yet earlier in the file.
+  // Invoke each plugin factory (registered via DT_registerPlugin before this
+  // IIFE) with a capability object. Must happen down here because ctx exposes
+  // things like METHOD_COLORS that aren't initialized earlier.
   const ctx = {
     Store, state,
-    // Shadow-scoped DOM access for plugins. `$`/`$$`/`$1` query the sidebar's
-    // shadow tree; `root` is where plugin-created overlays/menus must mount
-    // (page-level append would land outside the shadow and lose all styling).
+    // Shadow-scoped DOM access; `root` is where plugin overlays must mount
+    // (page-level append would land outside the shadow and lose styling).
     $: (id) => (dtRoot ? dtRoot.getElementById(id) : null),
     $$: (sel) => (dtRoot ? dtRoot.querySelectorAll(sel) : []),
     $1: (sel) => (dtRoot ? dtRoot.querySelector(sel) : null),
     root: () => rootMount(),
     escHtml, schemaBlock, tip, icon, METHOD_COLORS, ALL_METHODS, BASEURL_COLORS, getGroupHosts,
-    // Plugins (e.g. Bench) want a RAW fetch that bypasses interception — hand
-    // them the true native one, not _fetch, which after a site re-wrap can
-    // point back INTO the patched chain.
+    // Raw fetch that bypasses interception (native, not _fetch which can point
+    // back into the patched chain after a site re-wrap).
     getFetch: () => _nativeFetch || _fetch,
     updatePostmanKeyWarning,
     notifyPluginsBaseUrlGroupsChanged,
@@ -3207,22 +2981,16 @@
     plugins.forEach(p => p.onBaseUrlGroupsChanged && p.onBaseUrlGroupsChanged());
   }
 
-  // ─── Boot ─────────────────────────────────────────────────────────────────────
-  // @require scripts run synchronously before this script in normal conditions,
-  // but on a cold cache (first ever page visit) the browser may still be fetching
-  // them when document-start fires. Poll until CSS and HTML globals are available
-  // before injecting, so we never render with undefined globals.
+  // @require scripts usually run before this one, but on a cold cache they may
+  // still be fetching at document-start — poll until CSS/HTML globals are ready.
   function boot() {
-    // Must check for STRING type, not just defined-ness: `CSS` is also a native
-    // browser global (window.CSS, the CSSOM interface), so on a cold cache —
-    // before the @require'd Devtools_css.js has loaded — `typeof CSS` is
-    // already 'object' and the old `!== 'undefined'` check passed, injecting
-    // the literal string "[object CSS]" as the stylesheet.
+    // Check for STRING type, not just defined-ness: `CSS` is also a native global
+    // (CSSOM), so on a cold cache `typeof CSS` is 'object' and would inject the
+    // literal "[object CSS]" as the stylesheet.
     if (typeof CSS === 'string' && typeof HTML === 'string') {
       if (document.documentElement) inject();
       else document.addEventListener('DOMContentLoaded', inject);
     } else {
-      // Dependencies not ready yet — try again next microtask tick (max ~50 polls)
       if ((boot._tries = (boot._tries || 0) + 1) < 50) {
         setTimeout(boot, 20);
       } else {
@@ -3230,9 +2998,8 @@
       }
     }
   }
-  // Put the flash-guard in place immediately (document-start), before boot() has
-  // even finished waiting for the @require'd CSS/HTML on a cold cache.
-  injectCriticalHide();
+  injectCriticalHide(); // flash-guard immediately, before boot() waits on CSS/HTML
+
   boot();
 
 })();

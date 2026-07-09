@@ -13,7 +13,6 @@
 DT_registerPlugin(function createRecorderPlugin(ctx) {
   const { Store, state, $, root, escHtml, schemaBlock, tip, icon, ALL_METHODS, METHOD_COLORS, getGroupHosts, getFetch } = ctx;
 
-  // ─── API Recorder panel HTML ──────────────────────────────────────────────────
   function buildRecorderPanel() {
     return `
       <div class="dt-section">
@@ -71,7 +70,6 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     `;
   }
 
-  // ─── API Recorder ──────────────────────────────────────────────────────────
   // Passively documents endpoints hit while browsing: methods, query params,
   // headers, and request/response body SHAPES (data types, not real values).
   // Never blocks or edits traffic — purely observational, like bench capture.
@@ -197,15 +195,9 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
   }
   function stripOptMark(k) { return k.endsWith('?') ? k.slice(0, -1) : k; }
 
-  // Merge two schemas seen across samples of the same endpoint (or across hosts,
-  // when combining base-URL-group environments). Optionality is tracked on the
-  // KEY itself ("email?") rather than on the value/type — that way it works
-  // uniformly for scalar fields AND nested objects/arrays, and a key already
-  // marked optional from an earlier merge stays optional even if it's present
-  // in this sample (it's been proven inconsistent at least once, which is what
-  // "optional" means here). Value/type variance (e.g. a field that's sometimes
-  // a string and sometimes a number) is unioned separately as "string|number"
-  // and never conflated with the "?" presence marker.
+  // Merge two schemas seen across samples of an endpoint. Optionality is tracked
+  // on the KEY ("email?") so it works for scalars and nested structures, and stays
+  // sticky once set. Value/type variance is unioned separately ("string|number").
   function mergeSchema(a, b) {
     if (a === undefined) return b;
     if (b === undefined) return a;
@@ -292,12 +284,9 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     if (resBody) {
       let parsed; try { parsed = JSON.parse(resBody); } catch { parsed = null; }
       if (parsed !== null) {
-        // Niche escape hatch for sites that mask their real backend route behind
-        // a BFF/proxy: if the page echoes the true upstream path as a
-        // "backend_path" field in the response body, prefer that over the
-        // observed (masked) path for exports — but whitelist it off the
-        // documented schema so it's used internally only, never shown as a
-        // regular response field in the docs UI.
+        // Escape hatch for BFF/proxy sites: if the response echoes the true
+        // upstream path as "backend_path", prefer it for exports but keep it off
+        // the documented schema (internal use only).
         const rawBackendPath = extractBackendPath(parsed);
         let docBody = parsed;
         if (rawBackendPath !== undefined) {
@@ -323,20 +312,14 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     _storeDataTimer = setTimeout(() => { _storeDataTimer = null; Store.set('rec.data', state.recorder.data); }, 600);
   }
 
-  // Capture fires once per matched network request — on an active site (or
-  // one with Cloudflare-style background heartbeats) that's often multiple
-  // times a second. renderRecorderList() fully tears down and rebuilds every
-  // bucket's DOM (and force-closes the kebab menu) on each call, so calling
-  // it straight from recorderCapture made the kebab menu get nuked out from
-  // under the user before they could click anything in it. Debounce instead
-  // of rendering on every single capture.
+  // Debounce list rendering: capture can fire many times a second, and
+  // renderRecorderList() rebuilds every bucket's DOM (and closes the kebab menu).
   let _renderListTimer = null;
   function scheduleRenderRecorderList() {
     if (_renderListTimer) return;
     _renderListTimer = setTimeout(() => { _renderListTimer = null; renderRecorderList(); }, 400);
   }
 
-  // ── Display grouping (always reads raw per-host data; merges live if enabled) ──
   function cloneEndpoint(ep) { return JSON.parse(JSON.stringify(ep)); }
   function mergeEndpoint(a, b) {
     const statuses = { ...a.responseStatuses };
@@ -353,12 +336,9 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
       backendPath: a.backendPath || b.backendPath,
     };
   }
-  // ── Request-interceptor cross-check ───────────────────────────────────────
-  // Looks up whatever has ALREADY been documented for this exact endpoint,
-  // independent of whether recording is currently enabled or this host is a
-  // configured target — it's a read of existing docs, not a capture decision.
-  // Also pulls in sibling buckets from the same Base URL group, so docs
-  // recorded on staging still help while you're intercepting a prod request.
+  // Reads existing docs for this endpoint (regardless of recording state),
+  // including sibling buckets in the same Base URL group so staging docs help
+  // on prod requests.
   function findDocumentedEndpoint(url, method) {
     let u; try { u = new URL(url, location.href); } catch { return null; }
     const host = u.host;
@@ -458,7 +438,6 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     return Object.values(out);
   }
 
-  // ── Typed cURL / Postman collection export ──────────────────────────────────
   function schemaToTypedJSON(schema) {
     function walk(v) {
       if (typeof v === 'string') return `<${v}>`;
@@ -480,11 +459,8 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     }
     return curl;
   }
-  // Sort endpoints the way file paths naturally sort — by segment, not by hit
-  // count — so related routes (/invoice, /invoice/history, /invoice/pay, ...)
-  // end up next to each other instead of scattered by popularity. Plain string
-  // comparison already does this correctly: a path that's a prefix of another
-  // sorts immediately before it (e.g. "/invoice" < "/invoice/history").
+  // Sort endpoints by path (not hit count) so related routes cluster; plain
+  // string comparison already nests prefixes correctly.
   const METHOD_ORDER = { GET:0, POST:1, PUT:2, PATCH:3, DELETE:4 };
   function comparePathSegments(a, b) {
     const c = a.path.localeCompare(b.path);
@@ -625,7 +601,6 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     }
   }
 
-  // ── UI: targets ──────────────────────────────────────────────────────────────
   function populateBaseUrlTargetSelect() {
     const sel = $('dt-rec-add-baseurl-target');
     if (!sel) return;
@@ -694,7 +669,6 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     });
   }
 
-  // ── UI: recorded results ────────────────────────────────────────────────────
   function renderRecorderList() {
     const list = $('dt-rec-results-list');
     const emptyMsg = $('dt-rec-results-empty');
@@ -742,11 +716,8 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     });
   }
 
-  // Single shared dropdown "portal", appended directly to <body>. Bucket cards
-  // use overflow:hidden to clip their rounded corners, which would otherwise
-  // clip a normally-nested dropdown — rendering it outside the sidebar's DOM
-  // entirely sidesteps that, and positioning it via getBoundingClientRect()
-  // keeps it visually anchored under whichever kebab button was clicked.
+  // Shared dropdown portal appended to <body>: bucket cards use overflow:hidden
+  // (clips a nested dropdown), so it's positioned via getBoundingClientRect().
   function getKebabMenuEl() {
     let menu = $('dt-rec-kebab-portal');
     if (!menu) {
@@ -897,7 +868,6 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     });
   }
 
-  // ── Init / bind ──────────────────────────────────────────────────────────────
   function syncRecorderPanel() {
     const re = $('dt-rec-enabled'); if (re) re.checked = state.recorder.enabled;
     const rp = $('dt-rec-persist'); if (rp) rp.checked = state.recorder.persist;
@@ -972,13 +942,8 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
       renderRecorderList();
     });
 
-    // Registered once here (not inside renderRecorderList, which reruns often) —
-    // closes the kebab portal menu on any click outside it. Checking containment
-    // here (rather than relying on every kebab-btn/menu-item handler calling
-    // e.stopPropagation() correctly) means a click on the kebab button itself, or
-    // anywhere inside the open menu (including its padding, not just its buttons),
-    // can never be mistaken for an "outside" click and instantly close the menu
-    // it just opened.
+    // Registered once (not in renderRecorderList): closes the kebab portal on an
+    // outside click, via containment so clicks on the button/menu don't count.
     document.addEventListener('click', e => {
       // Shadow DOM retargets e.target to the host; use the true inner node.
       const t = (e.composedPath && e.composedPath()[0]) || e.target;

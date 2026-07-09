@@ -10,7 +10,6 @@
 DT_registerPlugin(function createBenchPlugin(ctx) {
   const { Store, state, $, $$, escHtml, ALL_METHODS, METHOD_COLORS, getFetch } = ctx;
 
-  // ─── Bench panel HTML ──────────────────────────────────────────────────────────
   function buildBenchPanel() {
     return `
       <!-- Mode selector: Off / Manual / Capture -->
@@ -178,7 +177,6 @@ DT_registerPlugin(function createBenchPlugin(ctx) {
     `;
   }
 
-  // ─── Benchmark ───────────────────────────────────────────────────────────────
   // NB: the panel's UI mode lives in bench.uiMode ('off'|'manual'|'capture').
   // Don't confuse it with state.bench.mode, which is the capture URL FILTER
   // mode ('auto'|'manual') — an earlier `bench.mode` field shadowed that name
@@ -220,7 +218,6 @@ DT_registerPlugin(function createBenchPlugin(ctx) {
     // bench.uiMode undefined) while the UI showed "Off" as active.
     setBenchMode(Store.get('bench.capPersist', false) ? 'capture' : 'off');
 
-    // ── cURL paste parser ─────────────────────────────────────────────────────
     $('dt-bench-curl-parse').addEventListener('click', () => {
       const raw = ($('dt-bench-curl-input').value || '').trim();
       if (!raw) return;

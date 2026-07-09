@@ -13,7 +13,6 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
   // Input types that can never be meaningfully autofilled from the panel.
   const SKIP_TYPES = ['hidden', 'submit', 'button', 'reset', 'image', 'file'];
 
-  // ─── Page form detection ─────────────────────────────────────────────────────
   // Field/form keys are stable identifiers persisted in the saved config, so a
   // config keeps applying across visits: prefer name/id, fall back to position.
   function classify(el) {
@@ -41,11 +40,9 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     return '';
   }
 
-  // Fallback for inputs with no semantic label: a label/span/legend sitting in
-  // the same container (e.g. <div><span>Username</span><input></div>). Walks up
-  // a few wrapper levels, but bails as soon as an ancestor holds OTHER fields —
-  // any text found there could belong to a different field. Same-name radios
-  // don't count as "other" so a group can share its container's label/legend.
+  // Fallback for inputs with no semantic label: nearby label/span/legend in the
+  // same container. Walks up a few levels but bails once an ancestor holds other
+  // fields (same-name radios excepted, so a group can share one label).
   function nearbyLabelText(el) {
     let node = el;
     for (let depth = 0; depth < 3; depth++) {
@@ -148,7 +145,6 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     return out;
   }
 
-  // ─── Template engine ─────────────────────────────────────────────────────────
   // Text values are templates mixing fixed text and {{tokens}}, e.g.
   //   prefix-{{date(mm-yy)}}-{{random}}
   function formatDate(d, fmt) {
@@ -201,13 +197,9 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
   const TOKENS_HINT = '{{date(dd-mm-yyyy)}} · {{time(hh:ii)}} · {{random}} / {{random(8)}} · {{randnum(4)}} · {{uuid}} · {{timestamp}} · {{counter}} · {{param(name)}}';
   const COND_HINT = "expr conditions are JS with param('a'), field('nameOrId'), url, path, host, date, now — e.g. field('type')=='c' || date.getDate()%2==1";
 
-  // ─── Value resolution (conditions) ──────────────────────────────────────────
-  // Each field has a default value plus optional conditions; the first matching
-  // condition overrides the default. Two kinds (older configs have no `kind`
-  // and default to 'param'):
-  //  - param: URL param is present, and (if a match value is set) equals it.
-  //  - expr:  free JS expression with page helpers — covers "input A has value
-  //           c", "day of month is odd", and anything else.
+  // Each field has a default plus optional conditions; the first match overrides
+  // the default. Kinds (default 'param'): param = URL param present/equal;
+  // expr = free JS expression with page helpers.
 
   // Current value of another input on the page, looked up by name or id.
   // Radio groups resolve to the checked option's value, checkboxes to a bool.
@@ -264,7 +256,6 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     return fieldCfg.value;
   }
 
-  // ─── Filling ─────────────────────────────────────────────────────────────────
   // Values are set through the native prototype setters + input/change events so
   // framework-controlled inputs (React/Vue/Angular) register the change instead
   // of silently reverting it on next render.
@@ -333,7 +324,6 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     });
   }
 
-  // ─── Panel HTML ──────────────────────────────────────────────────────────────
   function buildFormFillPanel() {
     return `
       <div class="dt-section">
@@ -361,7 +351,6 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     `;
   }
 
-  // ─── Panel logic ─────────────────────────────────────────────────────────────
   let detected = [];      // last detection result (holds live element refs)
   let editingId = null;   // id of the config open in the editor
 
@@ -484,7 +473,6 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     return `<select class="dt-ff-select ${extraCls}"><option value=""${!current ? ' selected' : ''}>— select —</option>${opts}</select>`;
   }
 
-  // ─── Config modal ────────────────────────────────────────────────────────────
   // Field configuration opens in a centered modal (same shell as the request
   // interceptor modal) instead of being crammed into the narrow sidebar.
   // Created lazily since most pages never open it; the static HTML template

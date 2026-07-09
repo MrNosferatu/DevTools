@@ -10,7 +10,6 @@
 DT_registerPlugin(function createMonitorPlugin(ctx) {
   const { Store, state, $, escHtml, schemaBlock, tip, ALL_METHODS, METHOD_COLORS } = ctx;
 
-  // ─── Network Monitor panel HTML ───────────────────────────────────────────────
   function buildMonitorPanel() {
     return `
       <div class="dt-section">
@@ -47,12 +46,8 @@ DT_registerPlugin(function createMonitorPlugin(ctx) {
     `;
   }
 
-  // ─── Network Monitor ────────────────────────────────────────────────────────
-  // A simple, persistent network log — like the browser's DevTools Network tab,
-  // but deliberately simpler: one on/off toggle, a regex filter, a free-text
-  // search, and "Copy as cURL" with the REAL captured values. (Contrast with the
-  // API Recorder plugin, which stores data TYPES instead of real values, grouped
-  // by endpoint, for documentation — this is a flat, literal request log.)
+  // A simple persistent network log: toggle, regex filter, search, and Copy as
+  // cURL with real captured values (vs the Recorder, which stores types).
 
   const MON_MAX_ENTRIES = 300;
   const MON_MAX_BODY_CHARS = 20000;
@@ -82,10 +77,8 @@ DT_registerPlugin(function createMonitorPlugin(ctx) {
     scheduleRenderMonitorList();
   }
 
-  // Capture can fire multiple times a second on a busy site. Persisting meant
-  // re-serializing up to 300 entries (each with up to 20k-char bodies) into GM
-  // storage per request, and rendering tore down the whole log DOM each time —
-  // collapsing any row the user had just expanded. Debounce both.
+  // Debounce persist + render: capture fires often, persisting re-serializes up
+  // to 300 entries and rendering tears down the whole log DOM (collapsing rows).
   let _monPersistTimer = null;
   function scheduleMonitorPersist() {
     clearTimeout(_monPersistTimer);
@@ -269,11 +262,8 @@ DT_registerPlugin(function createMonitorPlugin(ctx) {
 
     renderMonitorList();
 
-    // Relative timestamps ("just now", "2m ago") are baked in at render time
-    // and previously went stale until the next capture forced a re-render. Only
-    // re-render when the list is actually on screen (offsetParent is null while
-    // the panel is inactive or the sidebar is closed) — otherwise we'd rebuild
-    // hidden DOM every 30s for timestamps no one can see.
+    // Refresh baked-in relative timestamps every 30s, but only while the list is
+    // on screen (offsetParent null when hidden).
     setInterval(() => {
       if (state.monitor.entries.length && $('dt-mon-list') && $('dt-mon-list').offsetParent) renderMonitorList();
     }, 30000);

@@ -6,11 +6,8 @@
 // @author       MrNosferatu
 // ==/UserScript==
 
-// ─── Icon library ─────────────────────────────────────────────────────────────
-// Single source of truth for iconography so the whole UI shares one visual
-// language (feather-style, 24×24 stroke). Replaces the ad-hoc emoji/glyphs that
-// rendered inconsistently across OSes and fonts. `icon(name, size, sw)` returns
-// an inline <svg>; exposed to plugins via ctx.icon.
+// Single source of truth for icons (feather-style, 24×24 stroke). icon(name,
+// size, sw) returns an inline <svg>; exposed to plugins via ctx.icon.
 const DT_ICON_PATHS = {
   tool:        '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
   zap:         '<polygon points="13 2 4 13.5 11 13.5 10.5 22 20 10 13 10 13.5 2"/>',
@@ -47,11 +44,8 @@ function tip(text) {
   return `<span class="dt-tip"><span class="dt-tip-icon">?</span><span class="dt-tip-text">${text}</span></span>`;
 }
 
-// ─── Reusable network filter block (methods + URL mode/regex) ─────────────────
-// One markup template drives the Global, Request, and Response filter blocks —
-// each namespaced ('net' = global convenience, 'req', 'res'). The main script's
-// state already stores req.* and res.* independently; 'net' is a UI-only control
-// that writes to both at once.
+// One template drives the Global/Request/Response filter blocks, namespaced
+// ('net' is a UI-only control that writes to both req and res).
 function buildFilterBlock(ns) {
   return `
     <div class="dt-filter-block" data-ns="${ns}">
@@ -76,7 +70,6 @@ function buildFilterBlock(ns) {
     </div>`;
 }
 
-// ─── Build merged Network panel ───────────────────────────────────────────────
 function buildNetworkPanel() {
   return `
     <div class="dt-section">
@@ -172,7 +165,6 @@ function buildNetworkPanel() {
   `;
 }
 
-// ─── Sidebar settings panel HTML ──────────────────────────────────────────────
 function buildSidebarSettingsPanel() {
   return `
     <div class="dt-section">
@@ -290,7 +282,6 @@ function buildSidebarSettingsPanel() {
   `;
 }
 
-// ─── Editor HTML ──────────────────────────────────────────────────────────────
 // The cURL copy button lives here in the editor bar — a secondary utility
 // action, consistent with Format/Minify. Only rendered for the request editor.
 function buildEditorHTML(id) {
@@ -324,7 +315,6 @@ function buildEditorHTML(id) {
   `;
 }
 
-// ─── Full HTML ────────────────────────────────────────────────────────────────
 // Plugin nav buttons/panels (e.g. the API Recorder) are NOT baked in here —
 // they're appended to #dt-nav-plugins / #dt-scroll-plugins at runtime by the
 // main script, once for every registered plugin (see Devtools_plugins.js).
