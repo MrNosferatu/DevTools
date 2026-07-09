@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.10
+// @version      3.6.11
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -1332,6 +1332,21 @@
       });
     }
 
+    // Tree view toggle — swap the textarea for a collapsible JSON tree and back.
+    // State is read from the button's `.active` class (not a closure flag) so an
+    // external resetEditorTreeView() call stays in sync with the next click.
+    const treeBtn = $(`${id}-tree-toggle`);
+    const treeCont = $(`${id}-tree`);
+    const outer = $(`${id}-outer`);
+    const treeBody = $(`${id}-tree-body`);
+    if (treeBtn && treeCont && outer && treeBody) {
+      const showTree = () => { renderJsonTree(treeBody, $(id).value); outer.style.display = 'none'; treeCont.style.display = 'flex'; treeBtn.classList.add('active'); };
+      treeBtn.addEventListener('click', () => treeBtn.classList.contains('active') ? resetEditorTreeView(id) : showTree());
+      const expandBtn = $(`${id}-tree-expand`), collapseBtn = $(`${id}-tree-collapse`);
+      if (expandBtn) expandBtn.addEventListener('click', () => jtreeSetAll(treeBody, true));
+      if (collapseBtn) collapseBtn.addEventListener('click', () => jtreeSetAll(treeBody, false));
+    }
+
     // Feature 4: Vertical resize handle — remembered per-editor across reloads
     const resizeHandle = $(`${id}-resize`);
     const edWrap = $(`${id}-wrap`);
@@ -1549,6 +1564,93 @@
   function searchPrev(id,sk) { if(!state[sk].matches.length)return;state[sk].matchIndex=(state[sk].matchIndex-1+state[sk].matches.length)%state[sk].matches.length;renderHL(id,sk,state[sk].term);updateSCount(id,sk);scrollToMatch(id,sk); }
   function updateSCount(id,sk) { const c=$(`${id}-scount`);if(!c)return;const n=state[sk].matches.length;if(!state[sk].term||n===0){c.textContent=n===0&&state[sk].term?'0 results':'—';c.className='dt-search-count';}else{c.textContent=`${state[sk].matchIndex+1}/${n}`;c.className='dt-search-count found';} }
   function scrollToMatch(id,sk) { const ed=$(id);if(!ed||!state[sk].matches.length)return;const pos=state[sk].matches[state[sk].matchIndex];const lh=parseFloat(getComputedStyle(ed).lineHeight)||20;const lines=ed.value.slice(0,pos).split('\n').length-1;ed.scrollTop=Math.max(0,lines*lh-ed.clientHeight/2);ed.setSelectionRange(pos,pos+state[sk].term.length);syncOvScroll(id); }
+
+  // ─── Collapsible JSON tree ("Tree" view in the req/res editors) ───────────────
+  // A read-only alternative to the textarea: every object/array is a ▶/▼ node the
+  // user can fold. Children are built lazily on first expand (cheap for huge
+  // payloads); Expand/Collapse all walk the rendered nodes. The textarea stays
+  // the source of truth — toggling Tree just re-parses its current value.
+  const JTREE_MAX_CHILDREN = 1000; // per-level cap; deeper entries collapsed into a "… more" row
+  const JTREE_EXPAND_GUARD = 300;  // max passes for Expand-all (each pass may reveal new nodes)
+  function jsonValMeta(v) {
+    if (v === null) return { type:'null', cls:'dt-jv-null', preview:'null' };
+    if (Array.isArray(v)) return { type:'array', preview:`[${v.length}]` };
+    const t = typeof v;
+    if (t === 'object') return { type:'object', preview:`{${Object.keys(v).length}}` };
+    if (t === 'string') return { type:'string', cls:'dt-jv-string', preview:JSON.stringify(v) };
+    if (t === 'number') return { type:'number', cls:'dt-jv-number', preview:String(v) };
+    if (t === 'boolean') return { type:'boolean', cls:'dt-jv-boolean', preview:String(v) };
+    return { type:t, preview:String(v) };
+  }
+  function jtreeKeyHtml(key) { return key === undefined ? '' : `<span class="dt-tree-key">${escHtml(String(key))}</span>`; }
+  function jtreeBuild(parent, val, depth) {
+    const isArr = Array.isArray(val);
+    const entries = isArr ? val.map((v,i)=>[i,v]) : Object.entries(val);
+    entries.slice(0, JTREE_MAX_CHILDREN).forEach(([k,v]) => {
+      const m = jsonValMeta(v);
+      const childCount = (m.type==='array') ? v.length : (m.type==='object' ? Object.keys(v).length : 0);
+      const expandable = childCount > 0;
+      const node = document.createElement('div');
+      node.className = 'dt-tree-node' + (expandable ? ' dt-jexpandable' : '');
+      node.style.paddingLeft = (depth*14+4) + 'px';
+      node.innerHTML = `<span class="dt-tree-arrow">${expandable?'▶':''}</span>${jtreeKeyHtml(k)}<span class="dt-tree-type">${m.type}</span><span class="dt-tree-val ${m.cls||''}">${escHtml(m.preview)}</span>`;
+      parent.appendChild(node);
+      if (expandable) {
+        const children = document.createElement('div');
+        children.className = 'dt-jtree-children';
+        children.style.display = 'none';
+        const arrow = node.querySelector('.dt-tree-arrow');
+        let built = false;
+        node._jexpandable = true;
+        node._jisOpen = () => children.style.display !== 'none';
+        node._jopen = () => { if (!built) { jtreeBuild(children, v, depth+1); built = true; } children.style.display = 'block'; arrow.textContent = '▼'; };
+        node._jclose = () => { children.style.display = 'none'; arrow.textContent = '▶'; };
+        node.addEventListener('click', e => { e.stopPropagation(); node._jisOpen() ? node._jclose() : node._jopen(); });
+        parent.appendChild(children);
+      }
+    });
+    if (entries.length > JTREE_MAX_CHILDREN) {
+      const more = document.createElement('div');
+      more.className = 'dt-jtree-more';
+      more.style.paddingLeft = (depth*14+4) + 'px';
+      more.textContent = `… +${entries.length - JTREE_MAX_CHILDREN} more (switch to text to see all)`;
+      parent.appendChild(more);
+    }
+  }
+  function renderJsonTree(bodyEl, jsonStr) {
+    bodyEl.innerHTML = '';
+    let data;
+    try { data = JSON.parse(jsonStr); }
+    catch { const e = document.createElement('div'); e.className = 'dt-jtree-empty'; e.textContent = 'Not valid JSON — fix the body (or Format it) to see the tree.'; bodyEl.appendChild(e); return false; }
+    if (data === null || typeof data !== 'object') {
+      const m = jsonValMeta(data);
+      const node = document.createElement('div'); node.className = 'dt-tree-node';
+      node.innerHTML = `<span class="dt-tree-arrow"></span><span class="dt-tree-type">${m.type}</span><span class="dt-tree-val ${m.cls||''}">${escHtml(m.preview)}</span>`;
+      bodyEl.appendChild(node); return true;
+    }
+    jtreeBuild(bodyEl, data, 0);
+    // Open the first level so there's immediate structure to see.
+    bodyEl.querySelectorAll(':scope > .dt-tree-node.dt-jexpandable').forEach(n => n._jopen && n._jopen());
+    return true;
+  }
+  function jtreeSetAll(bodyEl, open) {
+    if (!open) { bodyEl.querySelectorAll('.dt-tree-node.dt-jexpandable').forEach(n => { if (n._jisOpen && n._jisOpen()) n._jclose(); }); return; }
+    // Each open() lazily reveals deeper nodes, so loop until nothing new opens.
+    let changed = true, guard = 0;
+    while (changed && guard++ < JTREE_EXPAND_GUARD) {
+      changed = false;
+      bodyEl.querySelectorAll('.dt-tree-node.dt-jexpandable').forEach(n => { if (n._jopen && !n._jisOpen()) { n._jopen(); changed = true; } });
+    }
+  }
+  // Force an editor back to its textarea (used when a modal repopulates it, so a
+  // stale tree from the previous request/response is never shown).
+  function resetEditorTreeView(id) {
+    const treeCont = $(`${id}-tree`), outer = $(`${id}-outer`), treeBtn = $(`${id}-tree-toggle`), treeBody = $(`${id}-tree-body`);
+    if (treeCont) treeCont.style.display = 'none';
+    if (outer) outer.style.display = '';
+    if (treeBtn) treeBtn.classList.remove('active');
+    if (treeBody) treeBody.innerHTML = '';
+  }
 
   // ─── GET Params ───────────────────────────────────────────────────────────────
   function addParamRow(listId,key,val) { const list=$(listId);const row=document.createElement('div');row.className='dt-param-row';row.innerHTML=`<input class="dt-param-input" placeholder="key" value="${escHtml(key)}" data-role="key"><span class="dt-param-eq">=</span><input class="dt-param-input" placeholder="value" value="${escHtml(val)}" data-role="val"><button class="dt-param-dup" title="Duplicate row">${icon('copy',13,1.8)}</button><button class="dt-param-del" title="Remove row">${icon('x',13,2.2)}</button>`;row.querySelector('.dt-param-del').addEventListener('click',()=>row.remove());row.querySelector('.dt-param-dup').addEventListener('click',()=>{const k=row.querySelector('[data-role=key]').value;const v=row.querySelector('[data-role=val]').value;const newRow=row.cloneNode(true);newRow.querySelector('[data-role=key]').value=k;newRow.querySelector('[data-role=val]').value=v;newRow.querySelector('.dt-param-del').addEventListener('click',()=>newRow.remove());newRow.querySelector('.dt-param-dup').addEventListener('click',function(){const k2=newRow.querySelector('[data-role=key]').value;const v2=newRow.querySelector('[data-role=val]').value;addParamRow(listId,k2,v2);});row.after(newRow);});list.appendChild(row); }
@@ -2099,7 +2201,7 @@
       if (docSuggestions) renderParamSuggestions('dt-req-params-list', docSuggestions.query);
     }else{
       $('dt-req-editor-section').style.display='flex';$('dt-req-params-section').style.display='none';
-      $('dt-req-ed').value=req._draftBody!=null?req._draftBody:body;updateBadge('dt-req-ed');renderHL('dt-req-ed','reqSearch','');
+      $('dt-req-ed').value=req._draftBody!=null?req._draftBody:body;updateBadge('dt-req-ed');renderHL('dt-req-ed','reqSearch','');resetEditorTreeView('dt-req-ed');
       renderBodySuggestions(docSuggestions ? docSuggestions.body : null);
       renderEditSuggestions('req');
     }
@@ -2110,7 +2212,7 @@
     populateHeaders('dt-req-hinner','dt-req-hcount',req._draftHeaders||req.headers,'dt-req-hrevert');
     // Body revert
     const reqRevert=$('dt-req-ed-revert');
-    if(reqRevert){reqRevert.onclick=()=>{$('dt-req-ed').value=body;updateBadge('dt-req-ed');renderHL('dt-req-ed','reqSearch','');};}
+    if(reqRevert){reqRevert.onclick=()=>{$('dt-req-ed').value=body;updateBadge('dt-req-ed');renderHL('dt-req-ed','reqSearch','');resetEditorTreeView('dt-req-ed');};}
     // Header revert
     const reqHRevert=$('dt-req-hrevert');
     if(reqHRevert){reqHRevert.onclick=(e)=>{e.stopPropagation();populateHeaders('dt-req-hinner','dt-req-hcount',req.headers,'dt-req-hrevert');};}
@@ -2226,12 +2328,12 @@
     $('dt-res-transform-err').className='dt-transform-err';
     $('dt-res-wrap-key').style.display='none';
     let body=res.body||'';try{body=JSON.stringify(JSON.parse(body),null,2);}catch{}
-    $('dt-res-ed').value=body;updateBadge('dt-res-ed');renderHL('dt-res-ed','resSearch','');
+    $('dt-res-ed').value=body;updateBadge('dt-res-ed');renderHL('dt-res-ed','resSearch','');resetEditorTreeView('dt-res-ed');
     renderEditSuggestions('res');
     populateHeaders('dt-res-hinner','dt-res-hcount',res.headers,'dt-res-hrevert');
     // Body revert
     const resRevert=$('dt-res-ed-revert');
-    if(resRevert){resRevert.onclick=()=>{let b=res.body||'';try{b=JSON.stringify(JSON.parse(b),null,2);}catch{}$('dt-res-ed').value=b;updateBadge('dt-res-ed');renderHL('dt-res-ed','resSearch','');};}
+    if(resRevert){resRevert.onclick=()=>{let b=res.body||'';try{b=JSON.stringify(JSON.parse(b),null,2);}catch{}$('dt-res-ed').value=b;updateBadge('dt-res-ed');renderHL('dt-res-ed','resSearch','');resetEditorTreeView('dt-res-ed');};}
     // Header revert
     const resHRevert=$('dt-res-hrevert');
     if(resHRevert){resHRevert.onclick=(e)=>{e.stopPropagation();populateHeaders('dt-res-hinner','dt-res-hcount',res.headers,'dt-res-hrevert');};}

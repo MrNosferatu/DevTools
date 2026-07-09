@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.6.10
+// @version      3.6.11
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -305,6 +305,21 @@ const CSS = `
   .dt-hl-overlay { position:absolute; top:0; left:0; right:0; bottom:0; pointer-events:none; line-height:1.7; padding:13px 15px; tab-size:2; white-space:pre; overflow:hidden; color:transparent; }
   .dt-hl-overlay mark { border-radius:2px; color:transparent; }
   .dt-editor { flex:1; width:100%; min-height:0; border:none; outline:none; resize:none; line-height:1.7; padding:13px 15px; tab-size:2; white-space:pre; overflow:auto; }
+  /* Collapsible JSON tree view — a read-only alternative to the textarea,
+     toggled from the editor bar. Reuses the .dt-tree-* node styling. */
+  .dt-editor-tree { flex:1; min-height:0; display:flex; flex-direction:column; }
+  .dt-editor-tree-bar { display:flex; align-items:center; gap:5px; padding:7px 10px 4px; flex-shrink:0; }
+  .dt-editor-tree-body { flex:1; min-height:0; overflow:auto; padding:6px 10px 12px; font-family:'IBM Plex Mono',monospace; font-size:11px; line-height:1.55; }
+  .dt-editor-tree-body .dt-tree-node { cursor:default; }
+  .dt-editor-tree-body .dt-tree-node.dt-jexpandable { cursor:pointer; }
+  .dt-editor-tree-body .dt-tree-val { max-width:none; overflow:visible; }
+  .dt-jtree-children { }
+  .dt-jtree-empty { color:var(--mu); padding:14px 4px; font-style:italic; }
+  .dt-jtree-more { color:var(--fa); padding:2px 4px; white-space:nowrap; }
+  .dt-jv-string { color:var(--ac); }
+  .dt-jv-number { color:#c084fc; }
+  .dt-jv-boolean { color:#38bdf8; }
+  .dt-jv-null { color:var(--fa); font-style:italic; }
   .dt-editor-bar { display:flex; align-items:center; gap:5px; padding:7px 10px; flex-shrink:0; }
   .dt-editor-btn { font-family:'IBM Plex Mono',monospace; font-size:9.5px; padding:3px 9px; border-radius:4px; cursor:pointer; transition:all .12s; }
   .dt-editor-btn:disabled { opacity:.35; cursor:default; }

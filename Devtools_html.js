@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — HTML
 // @namespace    http://tampermonkey.net/
-// @version      3.6.10
+// @version      3.6.11
 // @description  HTML template builders for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -37,6 +37,7 @@ const DT_ICON_PATHS = {
   trash:       '<polyline points="3 6 5 6 21 6"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
   activity:    '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
   checkSquare: '<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  tree:        '<rect x="3" y="3" width="7" height="5" rx="1"/><rect x="14" y="9" width="7" height="5" rx="1"/><rect x="14" y="16" width="7" height="5" rx="1"/><path d="M6.5 8v6a2 2 0 0 0 2 2H14M6.5 11.5H14"/>',
 };
 function icon(name, size = 14, sw = 1.8) {
   return `<svg class="dt-ico" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${DT_ICON_PATHS[name] || ''}</svg>`;
@@ -301,10 +302,18 @@ function buildEditorHTML(id) {
         <div class="dt-hl-overlay" id="${id}-hl" aria-hidden="true"></div>
         <textarea class="dt-editor" id="${id}" spellcheck="false"></textarea>
       </div>
+      <div class="dt-editor-tree" id="${id}-tree" style="display:none">
+        <div class="dt-editor-tree-bar">
+          <button class="dt-editor-btn dt-jtree-expand" id="${id}-tree-expand">Expand all</button>
+          <button class="dt-editor-btn dt-jtree-collapse" id="${id}-tree-collapse">Collapse all</button>
+        </div>
+        <div class="dt-editor-tree-body" id="${id}-tree-body"></div>
+      </div>
       <div class="dt-editor-bar" id="${id}-bar">
         <button class="dt-editor-btn" id="${id}-fmt">Format</button>
         <button class="dt-editor-btn" id="${id}-min">Minify</button>
         <span class="dt-json-badge" id="${id}-badge">—</span>
+        <button class="dt-editor-btn dt-tree-toggle-btn dt-editor-btn-ico" id="${id}-tree-toggle" title="Toggle collapsible JSON tree view">${icon('tree',13,1.7)}<span>Tree</span></button>
         <button class="dt-editor-btn dt-wrap-toggle-btn dt-editor-btn-ico" id="${id}-wrap-toggle" title="Toggle line wrap">${icon('wrap',13,1.7)}<span>Wrap</span></button>
         ${isCurlEditor ? `<button class="dt-editor-btn" id="dt-req-copy-curl">Copy as cURL</button>` : ''}
         <button class="dt-editor-btn dt-search-toggle-btn dt-editor-btn-ico" id="${id}-stoggle" title="Find (Ctrl+F)">${icon('search',13,1.9)}<span>Find</span></button>
