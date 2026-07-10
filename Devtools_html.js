@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — HTML
 // @namespace    http://tampermonkey.net/
-// @version      3.6.13
+// @version      3.6.14
 // @description  HTML template builders for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -224,9 +224,19 @@ function buildSidebarSettingsPanel() {
           <button class="dt-kb-reset" data-kb-reset="toggleRes" title="Reset to default">${icon('x',12,2.2)}</button>
         </div>
         <div class="dt-kb-row" data-kb="holdIntercept">
-          <div class="dt-kb-info"><div class="dt-row-label">Hold to Intercept</div><div class="dt-row-sub">Momentary — active only while held</div></div>
+          <div class="dt-kb-info"><div class="dt-row-label">Hold to Intercept</div><div class="dt-row-sub">Momentary — Request + Response while held</div></div>
           <button class="dt-kb-input" data-kb-btn="holdIntercept"><span class="dt-kb-combo"></span></button>
           <button class="dt-kb-reset" data-kb-reset="holdIntercept" title="Reset to default">${icon('x',12,2.2)}</button>
+        </div>
+        <div class="dt-kb-row" data-kb="holdReq">
+          <div class="dt-kb-info"><div class="dt-row-label">Hold to Intercept Request</div><div class="dt-row-sub">Momentary — Request only while held</div></div>
+          <button class="dt-kb-input" data-kb-btn="holdReq"><span class="dt-kb-combo"></span></button>
+          <button class="dt-kb-reset" data-kb-reset="holdReq" title="Reset to default">${icon('x',12,2.2)}</button>
+        </div>
+        <div class="dt-kb-row" data-kb="holdRes">
+          <div class="dt-kb-info"><div class="dt-row-label">Hold to Intercept Response</div><div class="dt-row-sub">Momentary — Response only while held</div></div>
+          <button class="dt-kb-input" data-kb-btn="holdRes"><span class="dt-kb-combo"></span></button>
+          <button class="dt-kb-reset" data-kb-reset="holdRes" title="Reset to default">${icon('x',12,2.2)}</button>
         </div>
       </div>
     </div>
@@ -292,10 +302,9 @@ function buildSidebarSettingsPanel() {
 }
 
 // ─── Editor HTML ──────────────────────────────────────────────────────────────
-// The cURL copy button lives here in the editor bar — a secondary utility
-// action, consistent with Format/Minify. Only rendered for the request editor.
+// The "Copy as cURL" button lives next to the Request Payload's Revert button
+// (see the request modal markup), not in this editor bar.
 function buildEditorHTML(id) {
-  const isCurlEditor = id === 'dt-req-ed';
   return `
     <div class="dt-editor-wrap" id="${id}-wrap">
       <div class="dt-editor-outer" id="${id}-outer">
@@ -309,7 +318,6 @@ function buildEditorHTML(id) {
         <button class="dt-editor-btn dt-fold-btn" id="${id}-fold-all" title="Collapse all JSON blocks">Fold all</button>
         <button class="dt-editor-btn dt-fold-btn" id="${id}-unfold-all" title="Expand all JSON blocks">Unfold all</button>
         <button class="dt-editor-btn dt-wrap-toggle-btn dt-editor-btn-ico" id="${id}-wrap-toggle" title="Toggle line wrap">${icon('wrap',13,1.7)}<span>Wrap</span></button>
-        ${isCurlEditor ? `<button class="dt-editor-btn" id="dt-req-copy-curl">Copy as cURL</button>` : ''}
         <button class="dt-editor-btn dt-search-toggle-btn dt-editor-btn-ico" id="${id}-stoggle" title="Find (Ctrl+F)">${icon('search',13,1.9)}<span>Find</span></button>
       </div>
       <div class="dt-search-bar hidden" id="${id}-sbar">
@@ -343,6 +351,12 @@ const HTML = `
     <div class="dt-head">
       <div class="dt-head-icon">${icon('tool',17,1.8)}</div>
       <div class="dt-head-text"><div class="dt-head-title">DevTools</div><div class="dt-head-sub">Developer Utilities</div></div>
+      <button class="dt-head-forcedark" id="dt-force-dark-btn" title="Force dark mode for this site" aria-pressed="false">
+        <span class="dt-fd-toggle">
+          <svg class="dt-fd-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.5"/><line x1="12" y1="1.5" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22.5"/><line x1="1.5" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22.5" y2="12"/><line x1="4.2" y1="4.2" x2="6" y2="6"/><line x1="18" y1="18" x2="19.8" y2="19.8"/><line x1="19.8" y1="4.2" x2="18" y2="6"/><line x1="6" y1="18" x2="4.2" y2="19.8"/></svg>
+          <svg class="dt-fd-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </span>
+      </button>
       <button class="dt-head-settings" id="dt-settings-btn" title="Settings">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82A1.65 1.65 0 0 0 3 13.09H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
@@ -384,10 +398,13 @@ const HTML = `
           <div id="dt-req-editor-section" class="dt-payload-section">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
               <div class="dt-flabel" style="margin-bottom:0">Request Payload</div>
-              <button class="dt-revert-btn" id="dt-req-ed-revert" title="Revert to original">
-                <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M1.5 5.5A4 4 0 1 1 3 8.5"/><polyline points="1,3 1.5,5.5 4,5"/></svg>
-                Revert
-              </button>
+              <div style="display:flex;align-items:center;gap:6px">
+                <button class="dt-revert-btn" id="dt-req-ed-revert" title="Revert to original">
+                  <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M1.5 5.5A4 4 0 1 1 3 8.5"/><polyline points="1,3 1.5,5.5 4,5"/></svg>
+                  Revert
+                </button>
+                <button class="dt-editor-btn" id="dt-req-copy-curl">Copy as cURL</button>
+              </div>
             </div>
             ${buildEditorHTML('dt-req-ed')}
             <div class="dt-edit-suggest" id="dt-req-edit-suggest" style="display:none"></div>

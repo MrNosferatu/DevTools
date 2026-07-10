@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.13
+// @version      3.6.14
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -120,6 +120,8 @@
       toggleReq:     Store.get('keybinds.toggleReq',     'Alt+W'),
       toggleRes:     Store.get('keybinds.toggleRes',     'Alt+A'),
       holdIntercept: Store.get('keybinds.holdIntercept', 'Alt+S'),
+      holdReq:       Store.get('keybinds.holdReq',       'Alt+D'),
+      holdRes:       Store.get('keybinds.holdRes',       'Alt+F'),
     },
     _captureKeybind: null, // set while the settings UI is recording a new combo
     editMemory: loadEditMemory(), // recent request/response edits (see Edit Memory)
@@ -163,6 +165,8 @@
     'keybinds.toggleReq':  () => { state.keybinds.toggleReq  = Store.get('keybinds.toggleReq',  'Alt+W'); syncKeybindUI(); },
     'keybinds.toggleRes':  () => { state.keybinds.toggleRes  = Store.get('keybinds.toggleRes',  'Alt+A'); syncKeybindUI(); },
     'keybinds.holdIntercept': () => { state.keybinds.holdIntercept = Store.get('keybinds.holdIntercept', 'Alt+S'); syncKeybindUI(); },
+    'keybinds.holdReq':    () => { state.keybinds.holdReq = Store.get('keybinds.holdReq', 'Alt+D'); syncKeybindUI(); },
+    'keybinds.holdRes':    () => { state.keybinds.holdRes = Store.get('keybinds.holdRes', 'Alt+F'); syncKeybindUI(); },
 
     // Per-plugin storage-sync handlers (e.g. 'rec.*', 'mon.*', 'baseurl.*',
     // 'bench.*') are merged in below, once plugin factories have run.
@@ -393,6 +397,105 @@
       .dt-editor-outer .CodeMirror-foldmarker { color:${t.caret}; background:${t.caret}1f; border-color:${t.bdr}; text-shadow:none; }
       .dt-editor-outer .CodeMirror-foldgutter-open:after, .dt-editor-outer .CodeMirror-foldgutter-folded:after { color:${t.sMuColor}; }
     `;
+  }
+
+  // ─── Force Dark (per-site) ────────────────────────────────────────────────────
+  // A brute-force "dark mode" for sites that ship no dark theme. It inverts the
+  // whole page (approximate: hue-rotate(180) keeps hues roughly, colours aren't
+  // truly remapped) and re-inverts images/video/media so they look normal. NOT
+  // the site's own dark mode — a userscript can't force prefers-color-scheme, so
+  // this is the universal fallback. Persisted per origin and injected at
+  // document-start so it applies before first paint (no white flash).
+  //
+  // The invert is applied to `html > :not(#dt-host)`, NOT to `html` itself, so
+  // our shadow host (#dt-host) is excluded — this both keeps the sidebar's own
+  // colours intact and avoids a root-level filter reparenting the sidebar's
+  // position:fixed layers. Media re-inversion targets light-DOM elements only;
+  // the sidebar's own images live in the shadow tree, which page CSS can't reach.
+  // Per-origin store maps to a MODE, not a bare boolean:
+  //   'invert' — the site was light when enabled, so invert it to make it dark.
+  //   'asis'   — the site was ALREADY dark when enabled; inverting it would turn
+  //              it white, so we keep it on (button lit) but apply no filter.
+  // The mode is decided ONCE, when the toggle is switched on (the page is loaded
+  // then, so luminance is measurable). On later loads we just replay the stored
+  // mode at document-start — no re-measure, no flash, and never a wrongly
+  // whitened dark site.
+  const FORCE_DARK_KEY = 'forceDark.origins';
+  const FORCE_DARK_CSS =
+    'html{background:#111 !important;}' +
+    'html>:not(#dt-host){filter:invert(1) hue-rotate(180deg) !important;}' +
+    'img,picture,video,canvas,svg image,iframe,embed,object,' +
+    '[style*="background-image"],[style*="url("]{filter:invert(1) hue-rotate(180deg) !important;}';
+  function forceDarkOrigins() { const v = Store.get(FORCE_DARK_KEY, {}); return (v && typeof v === 'object') ? v : {}; }
+  function forceDarkMode() {
+    const v = forceDarkOrigins()[location.origin];
+    if (v === 'invert' || v === 'asis') return v;
+    if (v === true) return 'invert'; // migrate legacy boolean entries
+    return null;
+  }
+  function isForceDarkOn() { try { return forceDarkMode() !== null; } catch { return false; } }
+  // Relative luminance of the page's effective background, to decide if the site
+  // is already dark. Falls back to text colour, then the OS colour-scheme.
+  function _fdParseRgb(str) {
+    const m = str && str.match(/rgba?\(([\d.\s,]+)\)/i);
+    if (!m) return null;
+    const p = m[1].split(',').map(s => parseFloat(s));
+    if (p.length < 3 || p.slice(0, 3).some(isNaN)) return null;
+    if (p.length > 3 && p[3] === 0) return null; // fully transparent — no signal
+    return [p[0], p[1], p[2]];
+  }
+  function _fdLum(rgb) { return (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255; }
+  function detectSiteIsDark() {
+    try {
+      for (const el of [document.body, document.documentElement]) {
+        if (!el) continue;
+        const rgb = _fdParseRgb(getComputedStyle(el).backgroundColor);
+        if (rgb) return _fdLum(rgb) < 0.5;
+      }
+      // No opaque page background — infer from text colour (light text ⇒ dark page).
+      const tEl = document.body || document.documentElement;
+      if (tEl) { const rgb = _fdParseRgb(getComputedStyle(tEl).color); if (rgb) return _fdLum(rgb) > 0.5; }
+    } catch {}
+    return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  }
+  function applyForceDarkStyle(active) {
+    const ID = 'dt-force-dark-style';
+    let el = document.getElementById(ID);
+    if (active) {
+      if (!el) {
+        el = document.createElement('style');
+        el.id = ID;
+        (document.head || document.documentElement || document).appendChild(el);
+      }
+      if (el.textContent !== FORCE_DARK_CSS) el.textContent = FORCE_DARK_CSS;
+    } else if (el) {
+      el.remove();
+    }
+  }
+  // Called at document-start (before the sidebar exists) so a remembered site
+  // darkens before it paints. Only the 'invert' mode applies a filter.
+  function applyForceDarkIfEnabled() { try { applyForceDarkStyle(forceDarkMode() === 'invert'); } catch {} }
+  function setForceDark(on) {
+    const map = forceDarkOrigins();
+    if (on) {
+      const mode = detectSiteIsDark() ? 'asis' : 'invert';
+      map[location.origin] = mode;
+      Store.set(FORCE_DARK_KEY, map);
+      applyForceDarkStyle(mode === 'invert');
+      if (mode === 'asis') showInterceptToast('Site is already dark — leaving it as-is', true);
+    } else {
+      delete map[location.origin];
+      Store.set(FORCE_DARK_KEY, map);
+      applyForceDarkStyle(false);
+    }
+    updateForceDarkBtn();
+  }
+  function updateForceDarkBtn() {
+    const btn = $('dt-force-dark-btn'); if (!btn) return;
+    const on = isForceDarkOn();
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.title = on ? 'Force dark: on for this site (click to turn off)' : 'Force dark mode for this site';
   }
 
   // Sidebar color palettes — like the editor themes, but each ships BOTH a
@@ -1135,6 +1238,12 @@
     }, { passive: false });
     const settingsBtn = $('dt-settings-btn');
     if (settingsBtn) settingsBtn.addEventListener('click', () => switchToPanel('settings'));
+    // Force Dark sun/moon toggle (header) — per-site, reflects current origin.
+    const forceDarkBtn = $('dt-force-dark-btn');
+    if (forceDarkBtn) {
+      updateForceDarkBtn();
+      forceDarkBtn.addEventListener('click', () => setForceDark(!isForceDarkOn()));
+    }
     // The About panel has no nav button — previously it was dead, unreachable
     // markup. The header icon/title now opens it.
     const headIcon = $1('#dt-sidebar .dt-head-icon');
@@ -2719,7 +2828,10 @@
     { id:'toggleRes',     label:'Toggle Response Intercept',             def:'Alt+A' },
     // Momentary: interception is forced on only while the combo is held down,
     // then reverts — the enable toggles are never changed. See beginHold/endHold.
-    { id:'holdIntercept', label:'Hold to Intercept',                     def:'Alt+S', hold:true },
+    // `sides` selects which interceptor(s) the hold forces on.
+    { id:'holdIntercept', label:'Hold to Intercept (Request + Response)', def:'Alt+S', hold:true, sides:{req:true,  res:true } },
+    { id:'holdReq',       label:'Hold to Intercept Request',             def:'Alt+D', hold:true, sides:{req:true,  res:false} },
+    { id:'holdRes',       label:'Hold to Intercept Response',            def:'Alt+F', hold:true, sides:{req:false, res:true } },
   ];
 
   // Physical-key name for a KeyboardEvent, derived from e.code so the combo is
@@ -2785,13 +2897,15 @@
   // enabled flags back exactly as they were. Triggered by a hold-type keybind
   // (key held down) or by pressing-and-holding the Network panel's Hold button.
   let _holdState = null; // { prevReq, prevRes, comboParts:[] } while active
-  function beginHold(comboParts) {
+  function beginHold(comboParts, sides) {
     if (_holdState) return; // already holding (keydown auto-repeat)
+    sides = sides || { req: true, res: true };
     _holdState = { prevReq: state.req.enabled, prevRes: state.res.enabled, comboParts: comboParts || [] };
-    state.req.enabled = true;
-    state.res.enabled = true;
+    if (sides.req) state.req.enabled = true;
+    if (sides.res) state.res.enabled = true;
     syncNetworkPanel(); // NOTE: no Store.set — the hold must never persist
-    showInterceptToast('Hold intercept · Request + Response', true);
+    const label = sides.req && sides.res ? 'Request + Response' : sides.req ? 'Request' : 'Response';
+    showInterceptToast(`Hold intercept · ${label}`, true);
   }
   function endHold() {
     if (!_holdState) return;
@@ -2823,7 +2937,7 @@
       e.stopPropagation();
       // beginHold() self-guards against keydown auto-repeat; toggles must ignore
       // it explicitly, or holding the key would flip the state on every repeat.
-      if (def.hold) beginHold(combo.split('+'));
+      if (def.hold) beginHold(combo.split('+'), def.sides);
       else if (!e.repeat) runKeybind(def.id);
       return;
     }
@@ -3364,6 +3478,9 @@
   // Put the flash-guard in place immediately (document-start), before boot() has
   // even finished waiting for the @require'd CSS/HTML on a cold cache.
   injectCriticalHide();
+  // Apply a remembered per-site Force Dark before first paint (independent of the
+  // sidebar, which may still be waiting on its @require'd CSS/HTML).
+  applyForceDarkIfEnabled();
   boot();
 
 })();

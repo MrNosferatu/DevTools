@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.6.13
+// @version      3.6.14
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -124,6 +124,16 @@ const CSS = `
   .dt-head-sub { font-family:'IBM Plex Mono',monospace; font-size:9.5px; color:var(--mu); margin-top:1px; }
   .dt-head-close { width:28px; height:28px; border-radius:7px; background:transparent; border:1px solid var(--bd); color:var(--mu); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:14px; transition:all .15s; flex-shrink:0; }
   .dt-head-close:hover { background:var(--rd-bg); border-color:var(--rd-bd); color:var(--rd); }
+  /* Force Dark sun/moon toggle (header, left of Settings) */
+  .dt-head-forcedark { width:28px; height:28px; border-radius:7px; background:transparent; border:1px solid var(--bd); color:var(--mu); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all .15s; flex-shrink:0; }
+  .dt-head-forcedark:hover { background:var(--ac-bg); border-color:var(--ac-bd); color:var(--ac); }
+  .dt-head-forcedark.on { background:var(--ac-bg); border-color:var(--ac-bd); color:var(--ac); }
+  .dt-fd-toggle { position:relative; width:16px; height:16px; display:inline-block; }
+  .dt-fd-toggle svg { position:absolute; inset:0; width:16px; height:16px; transition:opacity .3s ease, transform .5s cubic-bezier(.5,1.6,.5,1); }
+  .dt-fd-sun  { opacity:1; transform:rotate(0deg)   scale(1); }
+  .dt-fd-moon { opacity:0; transform:rotate(-90deg) scale(.3); }
+  .dt-head-forcedark.on .dt-fd-sun  { opacity:0; transform:rotate(90deg) scale(.3); }
+  .dt-head-forcedark.on .dt-fd-moon { opacity:1; transform:rotate(0deg)  scale(1); }
   .dt-head-settings { width:28px; height:28px; border-radius:7px; background:transparent; border:1px solid var(--bd); color:var(--mu); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all .15s; flex-shrink:0; }
   .dt-head-settings:hover { background:var(--ac-bg); border-color:var(--ac-bd); color:var(--ac); }
   .dt-head-settings.active { background:var(--ac-bg); border-color:var(--ac-bd); color:var(--ac); }
