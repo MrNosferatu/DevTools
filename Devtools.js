@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.12
+// @version      3.6.13
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -367,6 +367,31 @@
       .dt-snav:hover { border-color:${t.bdr}; color:${t.sTxt}; }
       .dt-sclose { color:${t.sMuColor}; }
       .dt-sclose:hover { color:${t.sTxt}; }
+
+      /* CodeMirror surface — themed from the EDITOR theme (not the sidebar
+         palette), so the code editor matches the chosen editor theme. Token
+         colours reuse the theme's own caret/valid/invalid so they always
+         contrast with its background. Selectors mirror the static ones in
+         Devtools_css.js at equal specificity, and this stylesheet is appended
+         later, so these win. */
+      .dt-editor-outer .CodeMirror { background:${t.bg}; color:${t.text}; caret-color:${t.caret}; font-family:${f}; font-size:${fs}px; }
+      .dt-editor-outer .CodeMirror-gutters { background:${t.bar}; border-right-color:${t.bdr}; }
+      .dt-editor-outer .CodeMirror-linenumber { color:${t.sMuColor}; }
+      .dt-editor-outer .CodeMirror-cursor { border-left-color:${t.caret}; }
+      .dt-editor-outer .CodeMirror-selected { background:${t.caret}2b; }
+      .dt-editor-outer .CodeMirror-focused .CodeMirror-selected { background:${t.caret}40; }
+      .dt-editor-outer .CodeMirror-line::selection, .dt-editor-outer .CodeMirror-line > span::selection, .dt-editor-outer .CodeMirror-line > span > span::selection { background:${t.caret}40; }
+      .dt-editor-outer .CodeMirror-activeline-background { background:${t.bar}; }
+      .dt-editor-outer .cm-searching { background:${t.hlMark}; }
+      .dt-editor-outer .CodeMirror .cm-string { color:${t.valid}; }
+      .dt-editor-outer .CodeMirror .cm-number { color:${t.caret}; }
+      .dt-editor-outer .CodeMirror .cm-atom { color:${t.invalid}; }
+      .dt-editor-outer .CodeMirror .cm-keyword { color:${t.caret}; }
+      .dt-editor-outer .CodeMirror .cm-property { color:${t.text}; font-weight:500; }
+      .dt-editor-outer .CodeMirror .cm-error { color:${t.invalid}; }
+      .dt-editor-outer div.CodeMirror span.CodeMirror-matchingbracket { color:${t.valid}; font-weight:600; }
+      .dt-editor-outer .CodeMirror-foldmarker { color:${t.caret}; background:${t.caret}1f; border-color:${t.bdr}; text-shadow:none; }
+      .dt-editor-outer .CodeMirror-foldgutter-open:after, .dt-editor-outer .CodeMirror-foldgutter-folded:after { color:${t.sMuColor}; }
     `;
   }
 

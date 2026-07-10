@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.6.12
+// @version      3.6.13
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -405,12 +405,17 @@ const CSS = `
   .CodeMirror-foldgutter-open:after { content: "\\25BE"; }
   .CodeMirror-foldgutter-folded:after { content: "\\25B8"; }
 
-  /* ── DevTools overrides (theme-aware) ───────────────────────────────────── */
+  /* ── DevTools overrides ─────────────────────────────────────────────────────
+     Colours resolve from the EDITOR-theme variables (--dt-ed-*, set by
+     applyEditorTheme) with the sidebar palette only as a last-resort fallback,
+     so the code editor tracks the editor theme rather than the sidebar theme.
+     applyEditorTheme also emits exact-value rules (gutter/caret/tokens) that
+     layer on top of these. */
   .dt-editor-outer .CodeMirror { position:absolute; inset:0; height:auto; z-index:1;
-    font-family:'IBM Plex Mono',monospace; font-size:12px; line-height:1.65;
-    color:var(--tx); background:var(--bg); }
-  .dt-editor-outer .CodeMirror-scrollbar-filler, .dt-editor-outer .CodeMirror-gutter-filler { background-color:var(--bg); }
-  .dt-editor-outer .CodeMirror-gutters { background-color:var(--sf); border-right:1px solid var(--bd); }
+    font-family:var(--dt-ed-font, 'IBM Plex Mono',monospace); font-size:var(--dt-ed-fs, 12px); line-height:1.65;
+    color:var(--dt-ed-text, var(--tx)); background:var(--dt-ed-bg, var(--bg)); }
+  .dt-editor-outer .CodeMirror-scrollbar-filler, .dt-editor-outer .CodeMirror-gutter-filler { background-color:var(--dt-ed-bg, var(--bg)); }
+  .dt-editor-outer .CodeMirror-gutters { background-color:var(--dt-ed-bg, var(--sf)); border-right:1px solid var(--bd); }
   .dt-editor-outer .CodeMirror-linenumber { color:var(--fa); }
   .dt-editor-outer .CodeMirror-cursor { border-left:1.5px solid var(--tx); }
   .dt-editor-outer .CodeMirror-selected { background:rgba(120,150,255,.22); }
