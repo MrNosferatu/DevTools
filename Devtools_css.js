@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.6.11
+// @version      3.6.12
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -305,21 +305,129 @@ const CSS = `
   .dt-hl-overlay { position:absolute; top:0; left:0; right:0; bottom:0; pointer-events:none; line-height:1.7; padding:13px 15px; tab-size:2; white-space:pre; overflow:hidden; color:transparent; }
   .dt-hl-overlay mark { border-radius:2px; color:transparent; }
   .dt-editor { flex:1; width:100%; min-height:0; border:none; outline:none; resize:none; line-height:1.7; padding:13px 15px; tab-size:2; white-space:pre; overflow:auto; }
-  /* Collapsible JSON tree view — a read-only alternative to the textarea,
-     toggled from the editor bar. Reuses the .dt-tree-* node styling. */
-  .dt-editor-tree { flex:1; min-height:0; display:flex; flex-direction:column; }
-  .dt-editor-tree-bar { display:flex; align-items:center; gap:5px; padding:7px 10px 4px; flex-shrink:0; }
-  .dt-editor-tree-body { flex:1; min-height:0; overflow:auto; padding:6px 10px 12px; font-family:'IBM Plex Mono',monospace; font-size:11px; line-height:1.55; }
-  .dt-editor-tree-body .dt-tree-node { cursor:default; }
-  .dt-editor-tree-body .dt-tree-node.dt-jexpandable { cursor:pointer; }
-  .dt-editor-tree-body .dt-tree-val { max-width:none; overflow:visible; }
-  .dt-jtree-children { }
-  .dt-jtree-empty { color:var(--mu); padding:14px 4px; font-style:italic; }
-  .dt-jtree-more { color:var(--fa); padding:2px 4px; white-space:nowrap; }
-  .dt-jv-string { color:var(--ac); }
-  .dt-jv-number { color:#c084fc; }
-  .dt-jv-boolean { color:#38bdf8; }
-  .dt-jv-null { color:var(--fa); font-style:italic; }
+
+  /* ── CodeMirror (embedded via @require) ──────────────────────────────────────
+     The request/response body editors mount a CodeMirror instance for inline
+     JSON folding. The UI lives in a shadow root, so CodeMirror's own stylesheet
+     must be embedded here. Below: the official codemirror.css (5.65.19) core,
+     then foldgutter.css, then a theme-override block that maps colors onto our
+     CSS variables so it matches light/dark. Do not edit the core rules — tweak
+     only the "DevTools overrides" section. */
+  .CodeMirror { font-family: monospace; height: 300px; color: black; direction: ltr; }
+  .CodeMirror-lines { padding: 4px 0; }
+  .CodeMirror pre.CodeMirror-line, .CodeMirror pre.CodeMirror-line-like { padding: 0 4px; }
+  .CodeMirror-scrollbar-filler, .CodeMirror-gutter-filler { background-color: white; }
+  .CodeMirror-gutters { border-right: 1px solid #ddd; background-color: #f7f7f7; white-space: nowrap; }
+  .CodeMirror-linenumber { padding: 0 3px 0 5px; min-width: 20px; text-align: right; color: #999; white-space: nowrap; }
+  .CodeMirror-guttermarker { color: black; }
+  .CodeMirror-guttermarker-subtle { color: #999; }
+  .CodeMirror-cursor { border-left: 1px solid black; border-right: none; width: 0; }
+  .CodeMirror div.CodeMirror-secondarycursor { border-left: 1px solid silver; }
+  .cm-fat-cursor .CodeMirror-cursor { width: auto; border: 0 !important; background: #7e7; }
+  .cm-fat-cursor div.CodeMirror-cursors { z-index: 1; }
+  .cm-fat-cursor .CodeMirror-line::selection, .cm-fat-cursor .CodeMirror-line > span::selection, .cm-fat-cursor .CodeMirror-line > span > span::selection { background: transparent; }
+  .cm-fat-cursor { caret-color: transparent; }
+  .cm-tab { display: inline-block; text-decoration: inherit; }
+  .CodeMirror-rulers { position: absolute; left: 0; right: 0; top: -50px; bottom: 0; overflow: hidden; }
+  .CodeMirror-ruler { border-left: 1px solid #ccc; top: 0; bottom: 0; position: absolute; }
+  .cm-s-default .cm-header {color: blue;}
+  .cm-s-default .cm-quote {color: #090;}
+  .cm-negative {color: #d44;}
+  .cm-positive {color: #292;}
+  .cm-header, .cm-strong {font-weight: bold;}
+  .cm-em {font-style: italic;}
+  .cm-link {text-decoration: underline;}
+  .cm-strikethrough {text-decoration: line-through;}
+  .cm-s-default .cm-keyword {color: #708;}
+  .cm-s-default .cm-atom {color: #219;}
+  .cm-s-default .cm-number {color: #164;}
+  .cm-s-default .cm-def {color: #00f;}
+  .cm-s-default .cm-variable-2 {color: #05a;}
+  .cm-s-default .cm-variable-3, .cm-s-default .cm-type {color: #085;}
+  .cm-s-default .cm-comment {color: #a50;}
+  .cm-s-default .cm-string {color: #a11;}
+  .cm-s-default .cm-string-2 {color: #f50;}
+  .cm-s-default .cm-meta {color: #555;}
+  .cm-s-default .cm-qualifier {color: #555;}
+  .cm-s-default .cm-builtin {color: #30a;}
+  .cm-s-default .cm-bracket {color: #997;}
+  .cm-s-default .cm-tag {color: #170;}
+  .cm-s-default .cm-attribute {color: #00c;}
+  .cm-s-default .cm-hr {color: #999;}
+  .cm-s-default .cm-link {color: #00c;}
+  .cm-s-default .cm-error {color: #f00;}
+  .cm-invalidchar {color: #f00;}
+  .CodeMirror-composing { border-bottom: 2px solid; }
+  div.CodeMirror span.CodeMirror-matchingbracket {color: #0b0;}
+  div.CodeMirror span.CodeMirror-nonmatchingbracket {color: #a22;}
+  .CodeMirror-matchingtag { background: rgba(255, 150, 0, .3); }
+  .CodeMirror-activeline-background {background: #e8f2ff;}
+  .CodeMirror { position: relative; overflow: hidden; background: white; }
+  .CodeMirror-scroll { overflow: scroll !important; margin-bottom: -50px; margin-right: -50px; padding-bottom: 50px; height: 100%; outline: none; position: relative; z-index: 0; }
+  .CodeMirror-sizer { position: relative; border-right: 50px solid transparent; }
+  .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-scrollbar-filler, .CodeMirror-gutter-filler { position: absolute; z-index: 6; display: none; outline: none; }
+  .CodeMirror-vscrollbar { right: 0; top: 0; overflow-x: hidden; overflow-y: scroll; }
+  .CodeMirror-hscrollbar { bottom: 0; left: 0; overflow-y: hidden; overflow-x: scroll; }
+  .CodeMirror-scrollbar-filler { right: 0; bottom: 0; }
+  .CodeMirror-gutter-filler { left: 0; bottom: 0; }
+  .CodeMirror-gutters { position: absolute; left: 0; top: 0; min-height: 100%; z-index: 3; }
+  .CodeMirror-gutter { white-space: normal; height: 100%; display: inline-block; vertical-align: top; margin-bottom: -50px; }
+  .CodeMirror-gutter-wrapper { position: absolute; z-index: 4; background: none !important; border: none !important; }
+  .CodeMirror-gutter-background { position: absolute; top: 0; bottom: 0; z-index: 4; }
+  .CodeMirror-gutter-elt { position: absolute; cursor: default; z-index: 4; }
+  .CodeMirror-gutter-wrapper ::selection { background-color: transparent }
+  .CodeMirror-lines { cursor: text; min-height: 1px; }
+  .CodeMirror pre.CodeMirror-line, .CodeMirror pre.CodeMirror-line-like { border-radius: 0; border-width: 0; background: transparent; font-family: inherit; font-size: inherit; margin: 0; white-space: pre; word-wrap: normal; line-height: inherit; color: inherit; z-index: 2; position: relative; overflow: visible; -webkit-tap-highlight-color: transparent; font-variant-ligatures: contextual; }
+  .CodeMirror-wrap pre.CodeMirror-line, .CodeMirror-wrap pre.CodeMirror-line-like { word-wrap: break-word; white-space: pre-wrap; word-break: normal; }
+  .CodeMirror-linebackground { position: absolute; left: 0; right: 0; top: 0; bottom: 0; z-index: 0; }
+  .CodeMirror-linewidget { position: relative; z-index: 2; padding: 0.1px; }
+  .CodeMirror-rtl pre { direction: rtl; }
+  .CodeMirror-code { outline: none; }
+  .CodeMirror-scroll, .CodeMirror-sizer, .CodeMirror-gutter, .CodeMirror-gutters, .CodeMirror-linenumber { box-sizing: content-box; }
+  .CodeMirror-measure { position: absolute; width: 100%; height: 0; overflow: hidden; visibility: hidden; }
+  .CodeMirror-measure pre { position: static; }
+  .CodeMirror-cursor { position: absolute; pointer-events: none; }
+  div.CodeMirror-cursors { visibility: hidden; position: relative; z-index: 3; }
+  div.CodeMirror-dragcursors { visibility: visible; }
+  .CodeMirror-focused div.CodeMirror-cursors { visibility: visible; }
+  .CodeMirror-selected { background: #d9d9d9; }
+  .CodeMirror-focused .CodeMirror-selected { background: #d7d4f0; }
+  .CodeMirror-crosshair { cursor: crosshair; }
+  .CodeMirror-line::selection, .CodeMirror-line > span::selection, .CodeMirror-line > span > span::selection { background: #d7d4f0; }
+  .cm-searching { background-color: #ffa; background-color: rgba(255, 255, 0, .4); }
+  .cm-force-border { padding-right: .1px; }
+  .cm-tab-wrap-hack:after { content: ''; }
+  span.CodeMirror-selectedtext { background: none; }
+  /* foldgutter.css */
+  .CodeMirror-foldmarker { color: blue; text-shadow: #b9f 1px 1px 2px, #b9f -1px -1px 2px, #b9f 1px -1px 2px, #b9f -1px 1px 2px; font-family: arial; line-height: .3; cursor: pointer; }
+  .CodeMirror-foldgutter { width: .9em; }
+  .CodeMirror-foldgutter-open, .CodeMirror-foldgutter-folded { cursor: pointer; }
+  .CodeMirror-foldgutter-open:after { content: "\\25BE"; }
+  .CodeMirror-foldgutter-folded:after { content: "\\25B8"; }
+
+  /* ── DevTools overrides (theme-aware) ───────────────────────────────────── */
+  .dt-editor-outer .CodeMirror { position:absolute; inset:0; height:auto; z-index:1;
+    font-family:'IBM Plex Mono',monospace; font-size:12px; line-height:1.65;
+    color:var(--tx); background:var(--bg); }
+  .dt-editor-outer .CodeMirror-scrollbar-filler, .dt-editor-outer .CodeMirror-gutter-filler { background-color:var(--bg); }
+  .dt-editor-outer .CodeMirror-gutters { background-color:var(--sf); border-right:1px solid var(--bd); }
+  .dt-editor-outer .CodeMirror-linenumber { color:var(--fa); }
+  .dt-editor-outer .CodeMirror-cursor { border-left:1.5px solid var(--tx); }
+  .dt-editor-outer .CodeMirror-selected { background:rgba(120,150,255,.22); }
+  .dt-editor-outer .CodeMirror-focused .CodeMirror-selected { background:rgba(120,150,255,.30); }
+  .dt-editor-outer .CodeMirror-line::selection, .dt-editor-outer .CodeMirror-line > span::selection, .dt-editor-outer .CodeMirror-line > span > span::selection { background:rgba(120,150,255,.30); }
+  .dt-editor-outer .CodeMirror-activeline-background { background:var(--sf); }
+  .dt-editor-outer .cm-searching { background-color:rgba(250,204,21,.35); }
+  .dt-editor-outer .CodeMirror .cm-string { color:var(--ac); }
+  .dt-editor-outer .CodeMirror .cm-number { color:#c084fc; }
+  .dt-editor-outer .CodeMirror .cm-atom { color:#38bdf8; }
+  .dt-editor-outer .CodeMirror .cm-property { color:var(--tx); font-weight:500; }
+  .dt-editor-outer .CodeMirror .cm-keyword { color:#38bdf8; }
+  .dt-editor-outer .CodeMirror .cm-error { color:#f87171; }
+  .dt-editor-outer div.CodeMirror span.CodeMirror-matchingbracket { color:#22c55e; font-weight:600; }
+  .dt-editor-outer .CodeMirror-foldmarker { color:var(--ac); text-shadow:none; font-family:inherit; padding:0 4px; border-radius:3px; background:var(--ac-bg); border:1px solid var(--ac-bd); }
+  .dt-editor-outer .CodeMirror-foldgutter { width:1.1em; }
+  .dt-editor-outer .CodeMirror-foldgutter-open:after, .dt-editor-outer .CodeMirror-foldgutter-folded:after { color:var(--fa); }
   .dt-editor-bar { display:flex; align-items:center; gap:5px; padding:7px 10px; flex-shrink:0; }
   .dt-editor-btn { font-family:'IBM Plex Mono',monospace; font-size:9.5px; padding:3px 9px; border-radius:4px; cursor:pointer; transition:all .12s; }
   .dt-editor-btn:disabled { opacity:.35; cursor:default; }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — HTML
 // @namespace    http://tampermonkey.net/
-// @version      3.6.11
+// @version      3.6.12
 // @description  HTML template builders for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -302,18 +302,12 @@ function buildEditorHTML(id) {
         <div class="dt-hl-overlay" id="${id}-hl" aria-hidden="true"></div>
         <textarea class="dt-editor" id="${id}" spellcheck="false"></textarea>
       </div>
-      <div class="dt-editor-tree" id="${id}-tree" style="display:none">
-        <div class="dt-editor-tree-bar">
-          <button class="dt-editor-btn dt-jtree-expand" id="${id}-tree-expand">Expand all</button>
-          <button class="dt-editor-btn dt-jtree-collapse" id="${id}-tree-collapse">Collapse all</button>
-        </div>
-        <div class="dt-editor-tree-body" id="${id}-tree-body"></div>
-      </div>
       <div class="dt-editor-bar" id="${id}-bar">
         <button class="dt-editor-btn" id="${id}-fmt">Format</button>
         <button class="dt-editor-btn" id="${id}-min">Minify</button>
         <span class="dt-json-badge" id="${id}-badge">—</span>
-        <button class="dt-editor-btn dt-tree-toggle-btn dt-editor-btn-ico" id="${id}-tree-toggle" title="Toggle collapsible JSON tree view">${icon('tree',13,1.7)}<span>Tree</span></button>
+        <button class="dt-editor-btn dt-fold-btn" id="${id}-fold-all" title="Collapse all JSON blocks">Fold all</button>
+        <button class="dt-editor-btn dt-fold-btn" id="${id}-unfold-all" title="Expand all JSON blocks">Unfold all</button>
         <button class="dt-editor-btn dt-wrap-toggle-btn dt-editor-btn-ico" id="${id}-wrap-toggle" title="Toggle line wrap">${icon('wrap',13,1.7)}<span>Wrap</span></button>
         ${isCurlEditor ? `<button class="dt-editor-btn" id="dt-req-copy-curl">Copy as cURL</button>` : ''}
         <button class="dt-editor-btn dt-search-toggle-btn dt-editor-btn-ico" id="${id}-stoggle" title="Find (Ctrl+F)">${icon('search',13,1.9)}<span>Find</span></button>

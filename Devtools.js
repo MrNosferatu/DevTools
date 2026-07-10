@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.11
+// @version      3.6.12
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -1311,41 +1311,33 @@
     $(`${id}-snext`).addEventListener('click', () => searchNext(id,searchKey));
     $(`${id}-sclose`).addEventListener('click', () => closeSearch(id,searchKey));
 
-    // Feature 3: Line wrap toggle
+    // Feature 3: Line wrap toggle — drives CodeMirror's lineWrapping when CM is
+    // mounted, else falls back to toggling the textarea's white-space.
     const wrapBtn = $(`${id}-wrap-toggle`);
     if (wrapBtn) {
       let wrapOn = false;
       wrapBtn.addEventListener('click', () => {
         wrapOn = !wrapOn;
-        const ed = $(id), ov = $(`${id}-hl`), outer = $(`${id}-outer`);
+        wrapBtn.classList.toggle('active', wrapOn);
+        const cm = cmEditors[id];
+        if (cm) { cm.setOption('lineWrapping', wrapOn); return; }
+        const ed = $(id), ov = $(`${id}-hl`);
         if (wrapOn) {
           ed.style.whiteSpace = 'pre-wrap';
           ed.style.overflowX = 'hidden';
           if (ov) { ov.style.whiteSpace = 'pre-wrap'; ov.style.overflowX = 'hidden'; }
-          wrapBtn.classList.add('active');
         } else {
           ed.style.whiteSpace = 'pre';
           ed.style.overflowX = '';
           if (ov) { ov.style.whiteSpace = 'pre'; ov.style.overflowX = ''; }
-          wrapBtn.classList.remove('active');
         }
       });
     }
 
-    // Tree view toggle — swap the textarea for a collapsible JSON tree and back.
-    // State is read from the button's `.active` class (not a closure flag) so an
-    // external resetEditorTreeView() call stays in sync with the next click.
-    const treeBtn = $(`${id}-tree-toggle`);
-    const treeCont = $(`${id}-tree`);
-    const outer = $(`${id}-outer`);
-    const treeBody = $(`${id}-tree-body`);
-    if (treeBtn && treeCont && outer && treeBody) {
-      const showTree = () => { renderJsonTree(treeBody, $(id).value); outer.style.display = 'none'; treeCont.style.display = 'flex'; treeBtn.classList.add('active'); };
-      treeBtn.addEventListener('click', () => treeBtn.classList.contains('active') ? resetEditorTreeView(id) : showTree());
-      const expandBtn = $(`${id}-tree-expand`), collapseBtn = $(`${id}-tree-collapse`);
-      if (expandBtn) expandBtn.addEventListener('click', () => jtreeSetAll(treeBody, true));
-      if (collapseBtn) collapseBtn.addEventListener('click', () => jtreeSetAll(treeBody, false));
-    }
+    // Fold all / Unfold all — drive the CodeMirror fold gutter (see mountCodeEditor).
+    const foldAllBtn = $(`${id}-fold-all`), unfoldAllBtn = $(`${id}-unfold-all`);
+    if (foldAllBtn) foldAllBtn.addEventListener('click', () => cmFoldAll(id, true));
+    if (unfoldAllBtn) unfoldAllBtn.addEventListener('click', () => cmFoldAll(id, false));
 
     // Feature 4: Vertical resize handle — remembered per-editor across reloads
     const resizeHandle = $(`${id}-resize`);
@@ -1363,6 +1355,7 @@
         const newH = Math.max(120, startH + (e.clientY - startY));
         edWrap.style.height = newH + 'px';
         edWrap.style.flex = 'none';
+        const cm = cmEditors[id]; if (cm) cm.setSize(null, '100%');
       };
       const onUp = () => {
         document.removeEventListener('mousemove', onMove);
@@ -1370,6 +1363,7 @@
         document.body.style.userSelect = '';
         document.body.style.cursor = '';
         Store.set(heightKey, edWrap.offsetHeight);
+        const cm = cmEditors[id]; if (cm) cm.refresh();
       };
       resizeHandle.addEventListener('mousedown', e => {
         startY = e.clientY;
@@ -1381,6 +1375,11 @@
         e.preventDefault();
       });
     }
+
+    // Mount CodeMirror last, after the bar/search/wrap/resize handlers are wired
+    // (they read cmEditors[id] at event time). Falls back to the textarea if the
+    // library didn't load.
+    mountCodeEditor(id);
   }
 
   // Modal size (the native CSS `resize:both` drag handle in its bottom-right
@@ -1556,100 +1555,99 @@
 
   // ─── Search ───────────────────────────────────────────────────────────────────
   function openSearch(id) { $(`${id}-sbar`).classList.remove('hidden'); $(`${id}-stoggle`).classList.add('active'); const inp=$(`${id}-sinput`);inp.focus();inp.select(); }
-  function closeSearch(id,sk) { $(`${id}-sbar`).classList.add('hidden'); $(`${id}-stoggle`).classList.remove('active'); state[sk]={term:'',matchIndex:0,matches:[]}; renderHL(id,sk,''); const c=$(`${id}-scount`);if(c){c.textContent='—';c.className='dt-search-count';} }
+  function closeSearch(id,sk) { $(`${id}-sbar`).classList.add('hidden'); $(`${id}-stoggle`).classList.remove('active'); if(cmEditors[id])cmClearMarks(sk); state[sk]={term:'',matchIndex:0,matches:[]}; if(!cmEditors[id])renderHL(id,sk,''); const c=$(`${id}-scount`);if(c){c.textContent='—';c.className='dt-search-count';} }
   function toggleSearch(id) { const bar=$(`${id}-sbar`); const sk=id.startsWith('dt-req')?'reqSearch':'resSearch'; bar.classList.contains('hidden')?openSearch(id):closeSearch(id,sk); }
-  function runSearch(id,sk,term,jump) { if(jump===undefined)jump=true; state[sk].term=term;state[sk].matches=[];state[sk].matchIndex=0; if(!term){renderHL(id,sk,'');updateSCount(id,sk);return;} const text=$(id).value,lower=text.toLowerCase(),q=term.toLowerCase();let pos=0;while((pos=lower.indexOf(q,pos))!==-1){state[sk].matches.push(pos);pos+=q.length;} renderHL(id,sk,term);updateSCount(id,sk);if(jump)scrollToMatch(id,sk); }
-  function renderHL(id,sk,term) { const ov=$(`${id}-hl`),ed=$(id);if(!ov||!ed)return; if(!term||!state[sk].matches.length){ov.innerHTML=escHtml(ed.value);return;} const text=ed.value,q=term.toLowerCase(),ql=q.length;let res='',cur=0;state[sk].matches.forEach((pos,i)=>{res+=escHtml(text.slice(cur,pos));res+=`<mark class="${i===state[sk].matchIndex?'current':''}">${escHtml(text.slice(pos,pos+ql))}</mark>`;cur=pos+ql;});res+=escHtml(text.slice(cur));ov.innerHTML=res;syncOvScroll(id); }
-  function searchNext(id,sk) { if(!state[sk].matches.length)return;state[sk].matchIndex=(state[sk].matchIndex+1)%state[sk].matches.length;renderHL(id,sk,state[sk].term);updateSCount(id,sk);scrollToMatch(id,sk); }
-  function searchPrev(id,sk) { if(!state[sk].matches.length)return;state[sk].matchIndex=(state[sk].matchIndex-1+state[sk].matches.length)%state[sk].matches.length;renderHL(id,sk,state[sk].term);updateSCount(id,sk);scrollToMatch(id,sk); }
+  function runSearch(id,sk,term,jump) { if(jump===undefined)jump=true; if(cmEditors[id]){cmRunSearch(id,sk,term,jump);return;} state[sk].term=term;state[sk].matches=[];state[sk].matchIndex=0; if(!term){renderHL(id,sk,'');updateSCount(id,sk);return;} const text=$(id).value,lower=text.toLowerCase(),q=term.toLowerCase();let pos=0;while((pos=lower.indexOf(q,pos))!==-1){state[sk].matches.push(pos);pos+=q.length;} renderHL(id,sk,term);updateSCount(id,sk);if(jump)scrollToMatch(id,sk); }
+  function renderHL(id,sk,term) { if(cmEditors[id]){if(!term)cmClearMarks(sk);return;} const ov=$(`${id}-hl`),ed=$(id);if(!ov||!ed)return; if(!term||!state[sk].matches.length){ov.innerHTML=escHtml(ed.value);return;} const text=ed.value,q=term.toLowerCase(),ql=q.length;let res='',cur=0;state[sk].matches.forEach((pos,i)=>{res+=escHtml(text.slice(cur,pos));res+=`<mark class="${i===state[sk].matchIndex?'current':''}">${escHtml(text.slice(pos,pos+ql))}</mark>`;cur=pos+ql;});res+=escHtml(text.slice(cur));ov.innerHTML=res;syncOvScroll(id); }
+  function searchNext(id,sk) { if(!state[sk].matches.length)return;state[sk].matchIndex=(state[sk].matchIndex+1)%state[sk].matches.length; if(cmEditors[id]){updateSCount(id,sk);cmScrollToMatch(id,sk);return;} renderHL(id,sk,state[sk].term);updateSCount(id,sk);scrollToMatch(id,sk); }
+  function searchPrev(id,sk) { if(!state[sk].matches.length)return;state[sk].matchIndex=(state[sk].matchIndex-1+state[sk].matches.length)%state[sk].matches.length; if(cmEditors[id]){updateSCount(id,sk);cmScrollToMatch(id,sk);return;} renderHL(id,sk,state[sk].term);updateSCount(id,sk);scrollToMatch(id,sk); }
   function updateSCount(id,sk) { const c=$(`${id}-scount`);if(!c)return;const n=state[sk].matches.length;if(!state[sk].term||n===0){c.textContent=n===0&&state[sk].term?'0 results':'—';c.className='dt-search-count';}else{c.textContent=`${state[sk].matchIndex+1}/${n}`;c.className='dt-search-count found';} }
   function scrollToMatch(id,sk) { const ed=$(id);if(!ed||!state[sk].matches.length)return;const pos=state[sk].matches[state[sk].matchIndex];const lh=parseFloat(getComputedStyle(ed).lineHeight)||20;const lines=ed.value.slice(0,pos).split('\n').length-1;ed.scrollTop=Math.max(0,lines*lh-ed.clientHeight/2);ed.setSelectionRange(pos,pos+state[sk].term.length);syncOvScroll(id); }
 
-  // ─── Collapsible JSON tree ("Tree" view in the req/res editors) ───────────────
-  // A read-only alternative to the textarea: every object/array is a ▶/▼ node the
-  // user can fold. Children are built lazily on first expand (cheap for huge
-  // payloads); Expand/Collapse all walk the rendered nodes. The textarea stays
-  // the source of truth — toggling Tree just re-parses its current value.
-  const JTREE_MAX_CHILDREN = 1000; // per-level cap; deeper entries collapsed into a "… more" row
-  const JTREE_EXPAND_GUARD = 300;  // max passes for Expand-all (each pass may reveal new nodes)
-  function jsonValMeta(v) {
-    if (v === null) return { type:'null', cls:'dt-jv-null', preview:'null' };
-    if (Array.isArray(v)) return { type:'array', preview:`[${v.length}]` };
-    const t = typeof v;
-    if (t === 'object') return { type:'object', preview:`{${Object.keys(v).length}}` };
-    if (t === 'string') return { type:'string', cls:'dt-jv-string', preview:JSON.stringify(v) };
-    if (t === 'number') return { type:'number', cls:'dt-jv-number', preview:String(v) };
-    if (t === 'boolean') return { type:'boolean', cls:'dt-jv-boolean', preview:String(v) };
-    return { type:t, preview:String(v) };
+  // ─── CodeMirror (inline JSON folding for the req/res body editors) ────────────
+  // The two body editors mount a CodeMirror instance (loaded via @require) for
+  // gutter line-folding of any {} / [] block, matching brackets and JSON syntax
+  // colouring — the jsonformatter.org-style edit experience. The original
+  // <textarea> stays in the DOM (hidden) as the value carrier: its `.value` is
+  // proxied to CodeMirror so every existing `$(id).value` read/write (queue
+  // resolve, Format/Minify, Revert, badge, suggestions) keeps working untouched.
+  // If CodeMirror failed to load, the editors fall back to the plain textarea.
+  const cmEditors = {};
+  function getCM() {
+    if (typeof CodeMirror !== 'undefined' && CodeMirror) return CodeMirror;
+    try { if (typeof unsafeWindow !== 'undefined' && unsafeWindow.CodeMirror) return unsafeWindow.CodeMirror; } catch {}
+    return (realWindow && realWindow.CodeMirror) || null;
   }
-  function jtreeKeyHtml(key) { return key === undefined ? '' : `<span class="dt-tree-key">${escHtml(String(key))}</span>`; }
-  function jtreeBuild(parent, val, depth) {
-    const isArr = Array.isArray(val);
-    const entries = isArr ? val.map((v,i)=>[i,v]) : Object.entries(val);
-    entries.slice(0, JTREE_MAX_CHILDREN).forEach(([k,v]) => {
-      const m = jsonValMeta(v);
-      const childCount = (m.type==='array') ? v.length : (m.type==='object' ? Object.keys(v).length : 0);
-      const expandable = childCount > 0;
-      const node = document.createElement('div');
-      node.className = 'dt-tree-node' + (expandable ? ' dt-jexpandable' : '');
-      node.style.paddingLeft = (depth*14+4) + 'px';
-      node.innerHTML = `<span class="dt-tree-arrow">${expandable?'▶':''}</span>${jtreeKeyHtml(k)}<span class="dt-tree-type">${m.type}</span><span class="dt-tree-val ${m.cls||''}">${escHtml(m.preview)}</span>`;
-      parent.appendChild(node);
-      if (expandable) {
-        const children = document.createElement('div');
-        children.className = 'dt-jtree-children';
-        children.style.display = 'none';
-        const arrow = node.querySelector('.dt-tree-arrow');
-        let built = false;
-        node._jexpandable = true;
-        node._jisOpen = () => children.style.display !== 'none';
-        node._jopen = () => { if (!built) { jtreeBuild(children, v, depth+1); built = true; } children.style.display = 'block'; arrow.textContent = '▼'; };
-        node._jclose = () => { children.style.display = 'none'; arrow.textContent = '▶'; };
-        node.addEventListener('click', e => { e.stopPropagation(); node._jisOpen() ? node._jclose() : node._jopen(); });
-        parent.appendChild(children);
+  function mountCodeEditor(id) {
+    const CM = getCM(), ta = $(id), outer = $(`${id}-outer`);
+    if (!CM || !ta || !outer || cmEditors[id]) return;
+    let cm;
+    try {
+      cm = CM(outer, {
+        value: ta.value || '',
+        mode: { name:'javascript', json:true },
+        lineNumbers: true,
+        foldGutter: true,
+        gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter'],
+        matchBrackets: true,
+        lineWrapping: false,
+        tabSize: 2, indentUnit: 2,
+        viewportMargin: 30,
+        // brace-fold handles {}/[]; fall back to CM's auto range-finder if the
+        // addon shape differs across builds.
+        foldOptions: { rangeFinder: (CM.fold && CM.fold.brace) || undefined, widget: '…' },
+      });
+    } catch (e) { console.warn('[DevTools] CodeMirror init failed — using plain textarea:', e); return; }
+    cmEditors[id] = cm;
+    ta.style.display = 'none';
+    const ov = $(`${id}-hl`); if (ov) ov.style.display = 'none';
+    // Proxy the (hidden) textarea's value to CodeMirror so all existing call
+    // sites keep reading/writing `$(id).value` with no changes.
+    try {
+      Object.defineProperty(ta, 'value', {
+        configurable: true,
+        get() { return cm.getValue(); },
+        set(v) { const s = v == null ? '' : String(v); if (s !== cm.getValue()) cm.setValue(s); },
+      });
+    } catch (e) { console.warn('[DevTools] editor value proxy failed:', e); }
+    // Mirror CM edits as a native `input` event on the textarea, so the badge,
+    // edit-suggestions and live search fire exactly as they did before.
+    cm.on('change', () => { try { ta.dispatchEvent(new Event('input', { bubbles: true })); } catch {} });
+    cm.setOption('extraKeys', { 'Ctrl-F': () => openSearch(id), 'Cmd-F': () => openSearch(id) });
+  }
+  function refreshCM(id) { const cm = cmEditors[id]; if (cm) requestAnimationFrame(() => { try { cm.refresh(); } catch {} }); }
+  function cmFoldAll(id, fold) {
+    const cm = cmEditors[id], CM = getCM();
+    if (!cm || !CM) return;
+    cm.operation(() => {
+      for (let i = cm.firstLine(); i <= cm.lastLine(); i++) {
+        try { cm.foldCode(CM.Pos(i, 0), null, fold ? 'fold' : 'unfold'); } catch {}
       }
     });
-    if (entries.length > JTREE_MAX_CHILDREN) {
-      const more = document.createElement('div');
-      more.className = 'dt-jtree-more';
-      more.style.paddingLeft = (depth*14+4) + 'px';
-      more.textContent = `… +${entries.length - JTREE_MAX_CHILDREN} more (switch to text to see all)`;
-      parent.appendChild(more);
-    }
   }
-  function renderJsonTree(bodyEl, jsonStr) {
-    bodyEl.innerHTML = '';
-    let data;
-    try { data = JSON.parse(jsonStr); }
-    catch { const e = document.createElement('div'); e.className = 'dt-jtree-empty'; e.textContent = 'Not valid JSON — fix the body (or Format it) to see the tree.'; bodyEl.appendChild(e); return false; }
-    if (data === null || typeof data !== 'object') {
-      const m = jsonValMeta(data);
-      const node = document.createElement('div'); node.className = 'dt-tree-node';
-      node.innerHTML = `<span class="dt-tree-arrow"></span><span class="dt-tree-type">${m.type}</span><span class="dt-tree-val ${m.cls||''}">${escHtml(m.preview)}</span>`;
-      bodyEl.appendChild(node); return true;
+  // CodeMirror-backed search (used instead of the textarea overlay when CM is on).
+  function cmClearMarks(sk) { (state[sk]._marks || []).forEach(m => { try { m.clear(); } catch {} }); state[sk]._marks = []; }
+  function cmRunSearch(id, sk, term, jump) {
+    const cm = cmEditors[id], CM = getCM();
+    cmClearMarks(sk);
+    state[sk].term = term || ''; state[sk].matches = []; state[sk].matchIndex = 0; state[sk]._marks = [];
+    if (!term) { updateSCount(id, sk); return; }
+    const sc = cm.getSearchCursor(term, CM.Pos(cm.firstLine(), 0), true);
+    const marks = [];
+    while (sc.findNext()) {
+      const from = sc.from(), to = sc.to();
+      state[sk].matches.push({ from, to });
+      marks.push(cm.markText(from, to, { className: 'cm-searching' }));
+      if (marks.length > 5000) break;
     }
-    jtreeBuild(bodyEl, data, 0);
-    // Open the first level so there's immediate structure to see.
-    bodyEl.querySelectorAll(':scope > .dt-tree-node.dt-jexpandable').forEach(n => n._jopen && n._jopen());
-    return true;
+    state[sk]._marks = marks;
+    updateSCount(id, sk);
+    if (jump && state[sk].matches.length) cmScrollToMatch(id, sk);
   }
-  function jtreeSetAll(bodyEl, open) {
-    if (!open) { bodyEl.querySelectorAll('.dt-tree-node.dt-jexpandable').forEach(n => { if (n._jisOpen && n._jisOpen()) n._jclose(); }); return; }
-    // Each open() lazily reveals deeper nodes, so loop until nothing new opens.
-    let changed = true, guard = 0;
-    while (changed && guard++ < JTREE_EXPAND_GUARD) {
-      changed = false;
-      bodyEl.querySelectorAll('.dt-tree-node.dt-jexpandable').forEach(n => { if (n._jopen && !n._jisOpen()) { n._jopen(); changed = true; } });
-    }
-  }
-  // Force an editor back to its textarea (used when a modal repopulates it, so a
-  // stale tree from the previous request/response is never shown).
-  function resetEditorTreeView(id) {
-    const treeCont = $(`${id}-tree`), outer = $(`${id}-outer`), treeBtn = $(`${id}-tree-toggle`), treeBody = $(`${id}-tree-body`);
-    if (treeCont) treeCont.style.display = 'none';
-    if (outer) outer.style.display = '';
-    if (treeBtn) treeBtn.classList.remove('active');
-    if (treeBody) treeBody.innerHTML = '';
+  function cmScrollToMatch(id, sk) {
+    const cm = cmEditors[id], m = state[sk].matches[state[sk].matchIndex];
+    if (!cm || !m) return;
+    cm.setSelection(m.from, m.to); cm.scrollIntoView({ from: m.from, to: m.to }, 60);
   }
 
   // ─── GET Params ───────────────────────────────────────────────────────────────
@@ -1715,6 +1713,12 @@
       else if (ch === '}' || ch === ']') { if (depth === 0) { valEnd = i; break; } depth--; }
       else if (ch === ',' && depth === 0) { valEnd = i; break; }
       valEnd = i + 1;
+    }
+    const cm = cmEditors[ed.id];
+    if (cm) {
+      const from = cm.posFromIndex(valStart), to = cm.posFromIndex(valEnd);
+      cm.focus(); cm.setSelection(from, to); cm.scrollIntoView({ from, to }, 60);
+      return;
     }
     ed.focus();
     ed.setSelectionRange(valStart, valEnd);
@@ -2201,7 +2205,7 @@
       if (docSuggestions) renderParamSuggestions('dt-req-params-list', docSuggestions.query);
     }else{
       $('dt-req-editor-section').style.display='flex';$('dt-req-params-section').style.display='none';
-      $('dt-req-ed').value=req._draftBody!=null?req._draftBody:body;updateBadge('dt-req-ed');renderHL('dt-req-ed','reqSearch','');resetEditorTreeView('dt-req-ed');
+      $('dt-req-ed').value=req._draftBody!=null?req._draftBody:body;updateBadge('dt-req-ed');renderHL('dt-req-ed','reqSearch','');refreshCM('dt-req-ed');
       renderBodySuggestions(docSuggestions ? docSuggestions.body : null);
       renderEditSuggestions('req');
     }
@@ -2212,7 +2216,7 @@
     populateHeaders('dt-req-hinner','dt-req-hcount',req._draftHeaders||req.headers,'dt-req-hrevert');
     // Body revert
     const reqRevert=$('dt-req-ed-revert');
-    if(reqRevert){reqRevert.onclick=()=>{$('dt-req-ed').value=body;updateBadge('dt-req-ed');renderHL('dt-req-ed','reqSearch','');resetEditorTreeView('dt-req-ed');};}
+    if(reqRevert){reqRevert.onclick=()=>{$('dt-req-ed').value=body;updateBadge('dt-req-ed');renderHL('dt-req-ed','reqSearch','');};}
     // Header revert
     const reqHRevert=$('dt-req-hrevert');
     if(reqHRevert){reqHRevert.onclick=(e)=>{e.stopPropagation();populateHeaders('dt-req-hinner','dt-req-hcount',req.headers,'dt-req-hrevert');};}
@@ -2328,12 +2332,12 @@
     $('dt-res-transform-err').className='dt-transform-err';
     $('dt-res-wrap-key').style.display='none';
     let body=res.body||'';try{body=JSON.stringify(JSON.parse(body),null,2);}catch{}
-    $('dt-res-ed').value=body;updateBadge('dt-res-ed');renderHL('dt-res-ed','resSearch','');resetEditorTreeView('dt-res-ed');
+    $('dt-res-ed').value=body;updateBadge('dt-res-ed');renderHL('dt-res-ed','resSearch','');refreshCM('dt-res-ed');
     renderEditSuggestions('res');
     populateHeaders('dt-res-hinner','dt-res-hcount',res.headers,'dt-res-hrevert');
     // Body revert
     const resRevert=$('dt-res-ed-revert');
-    if(resRevert){resRevert.onclick=()=>{let b=res.body||'';try{b=JSON.stringify(JSON.parse(b),null,2);}catch{}$('dt-res-ed').value=b;updateBadge('dt-res-ed');renderHL('dt-res-ed','resSearch','');resetEditorTreeView('dt-res-ed');};}
+    if(resRevert){resRevert.onclick=()=>{let b=res.body||'';try{b=JSON.stringify(JSON.parse(b),null,2);}catch{}$('dt-res-ed').value=b;updateBadge('dt-res-ed');renderHL('dt-res-ed','resSearch','');};}
     // Header revert
     const resHRevert=$('dt-res-hrevert');
     if(resHRevert){resHRevert.onclick=(e)=>{e.stopPropagation();populateHeaders('dt-res-hinner','dt-res-hcount',res.headers,'dt-res-hrevert');};}
