@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — HTML
 // @namespace    http://tampermonkey.net/
-// @version      3.6.18
+// @version      3.6.19
 // @description  HTML template builders for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -683,6 +683,24 @@ const HTML = `
       <div class="dt-modal-foot" style="padding:12px 16px;gap:8px">
         <button class="dt-foot-btn dt-foot-btn-abort" id="dt-spe-cancel">Cancel</button>
         <button class="dt-foot-btn dt-foot-btn-send" id="dt-spe-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mock Fail picker — secondary modal opened from the request modal's "Mock Fail" -->
+  <div id="dt-mockpick-overlay" class="dt-overlay dt-mini-overlay">
+    <div class="dt-mini-modal" style="max-width:460px;width:92%">
+      <div class="dt-mini-modal-head">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="6"/><line x1="7" y1="4" x2="7" y2="8"/><line x1="7" y1="10.2" x2="7" y2="10.2"/></svg>
+        Mock Fail
+      </div>
+      <div class="dt-mini-modal-body">
+        <div class="dt-mockpick-sub" id="dt-mockpick-endpoint"></div>
+        <div class="dt-mockpick-list" id="dt-mockpick-list"></div>
+      </div>
+      <div class="dt-modal-foot" style="padding:12px 16px;gap:8px">
+        <button class="dt-foot-btn dt-foot-btn-abort" id="dt-mockpick-delsel" style="flex:0 0 auto" disabled>Delete selected</button>
+        <button class="dt-foot-btn dt-foot-btn-abort" id="dt-mockpick-close" style="flex:1">Close</button>
       </div>
     </div>
   </div>
