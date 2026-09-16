@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Constants
 // @namespace    http://tampermonkey.net/
-// @version      3.6.14
+// @version      3.6.16
 // @description  Shared constants for DevTools Sidebar. Must be loaded first via @require.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -9,7 +9,7 @@
 // Single runtime-readable copy of the script version (shown in the About
 // panel). bump-version.mjs rewrites this line together with every @version
 // header, so it can never drift from the release version again.
-const DT_VERSION = '3.6.14';
+const DT_VERSION = '3.6.16';
 
 const ALL_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 
@@ -29,4 +29,12 @@ const ED_FONTS = [
   { id:'fira',     name:'Fira Code',      css:"'Fira Code',monospace" },
   { id:'mono',     name:'System Mono',    css:"'Courier New',monospace" },
   { id:'sfmono',   name:'SF Mono',        css:"'SF Mono','SFMono-Regular',monospace" },
+];
+
+// Sidebar/modal UI font (not the code editor — that's ED_FONTS). Read through
+// the --dt-ui-font custom property; see applyInterfaceSettings() in Devtools.js.
+const UI_FONTS = [
+  { id:'plex',   name:'IBM Plex Sans', short:'Plex',   css:"'IBM Plex Sans',-apple-system,sans-serif" },
+  { id:'system', name:'System UI',     short:'System', css:"system-ui,-apple-system,'Segoe UI',Roboto,sans-serif" },
+  { id:'mono',   name:'IBM Plex Mono', short:'Mono',   css:"'IBM Plex Mono',monospace" },
 ];

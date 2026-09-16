@@ -1,0 +1,17 @@
+# Build output (./build.sh writes dist/<browser>/ plus store zips and signed .xpi)
+dist/
+*.xpi
+
+# AMO submission (./build.sh --submit)
+# .amo-credentials holds the API key/secret — never commit it.
+.amo-credentials
+# Stashed web-ext resume state (.web-extension-id / .amo-upload-uuid)
+.amo-state/
+.web-extension-id
+.amo-upload-uuid
+
+# Tooling
+node_modules/
+
+# Editors
+.idea/

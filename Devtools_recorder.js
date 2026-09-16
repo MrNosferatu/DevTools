@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — API Recorder Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.14
+// @version      3.6.16
 // @description  API Recorder plugin for DevTools Sidebar — passively documents endpoint shapes and exports/pushes them as a Postman collection.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -11,14 +11,14 @@
 // the returned plugin object to wire up the recorder's nav button, panel,
 // settings persistence, and network capture hook.
 DT_registerPlugin(function createRecorderPlugin(ctx) {
-  const { Store, state, $, root, escHtml, schemaBlock, tip, icon, ALL_METHODS, METHOD_COLORS, getGroupHosts, getFetch } = ctx;
+  const { Store, state, $, $$, root, escHtml, schemaBlock, tip, icon, ALL_METHODS, METHOD_COLORS, getGroupHosts, getFetch } = ctx;
 
   // ─── API Recorder panel HTML ──────────────────────────────────────────────────
   function buildRecorderPanel() {
     return `
       <div class="dt-section">
         <div class="dt-slabel">API Recorder</div>
-        <div class="dt-row-sub" style="margin-bottom:14px;color:var(--mu);font-size:11px">Passively watches matching requests in the background and auto-documents endpoints — methods, query params, headers, and body shapes (as data types, not real values). Nothing is blocked or modified.</div>
+        <div class="dt-row-sub" style="margin-bottom:14px;color:var(--mu);font-size:calc(11px*var(--dt-fs,1))">Passively watches matching requests in the background and auto-documents endpoints — methods, query params, headers, and body shapes (as data types, not real values). Nothing is blocked or modified.</div>
         <div class="dt-row" style="margin-bottom:10px">
           <div class="dt-row-label" style="display:flex;align-items:center;gap:5px">Record requests</div>
           <label class="dt-toggle"><input type="checkbox" id="dt-rec-enabled"><div class="dt-toggle-track"><div class="dt-toggle-thumb"></div></div></label>
@@ -42,7 +42,7 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
             <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="5.5" y1="1" x2="5.5" y2="10"/><line x1="1" y1="5.5" x2="10" y2="5.5"/></svg>
             Add URL
           </button>
-          <select class="dt-font-select" id="dt-rec-add-baseurl-target" style="flex:1;font-size:11px;padding:6px 24px 6px 8px">
+          <select class="dt-font-select" id="dt-rec-add-baseurl-target" style="flex:1;font-size:calc(11px*var(--dt-fs,1));padding:6px 24px 6px 8px">
             <option value="">+ From Base URL Group</option>
           </select>
         </div>
@@ -54,7 +54,7 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
           <label class="dt-toggle"><input type="checkbox" id="dt-rec-merge"><div class="dt-toggle-track"><div class="dt-toggle-thumb"></div></div></label>
         </div>
         <div class="dt-row" style="margin-top:10px;margin-bottom:0">
-          <div class="dt-row-label" style="display:flex;align-items:center;gap:5px">Organize Postman export into folders ${tip('Groups endpoints into Postman folders by shared URL segments. A segment only becomes a folder when something is nested under it — e.g. /invoice/history stays flat, but /invoice/pay becomes a "Pay" folder once /invoice/pay/cancel exists too. Affects Export and Push to Postman; the in-app list below is always flat, just sorted by path.')}</div>
+          <div class="dt-row-label" style="display:flex;align-items:center;gap:5px">Organize Postman export into folders ${tip('Groups endpoints into Postman folders by shared URL segments. A segment only becomes a folder when something is nested under it — e.g. /invoice/history stays flat, but /invoice/pay becomes a "Pay" folder once /invoice/pay/cancel exists too. Affects Export and Push to Postman; for the in-app list, use the Tree view below.')}</div>
           <label class="dt-toggle"><input type="checkbox" id="dt-rec-organize-folders"><div class="dt-toggle-track"><div class="dt-toggle-thumb"></div></div></label>
         </div>
       </div>
@@ -64,8 +64,33 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
           <div class="dt-slabel" style="margin-bottom:0">Recorded Endpoints</div>
           <button class="dt-bench-copy-btn" id="dt-rec-clear-all">Clear All</button>
         </div>
+        <div class="dt-rec-toolbar">
+          <div class="dt-rec-search-wrap" id="dt-rec-search-wrap">
+            ${icon('search', 12, 2)}
+            <input class="dt-rec-search" id="dt-rec-search" type="text" placeholder="Search path or method — POST /users, /orders/*" spellcheck="false" autocomplete="off">
+            <button class="dt-rec-search-clear" id="dt-rec-search-clear" type="button" title="Clear search (Esc)">${icon('x', 11, 2.4)}</button>
+          </div>
+          <div class="dt-rec-toolbar-row">
+            <div class="dt-side-toggle" id="dt-rec-view-toggle">
+              <button class="dt-side-btn" data-recview="list" title="Flat list of endpoints">List</button>
+              <button class="dt-side-btn" data-recview="tree" title="Group endpoints into folders by path segment">Tree</button>
+            </div>
+            <select class="dt-font-select dt-rec-sort" id="dt-rec-sort" title="Sort endpoints">
+              <option value="path">Sort: Path</option>
+              <option value="method">Sort: Method</option>
+              <option value="hits">Sort: Most hits</option>
+              <option value="recent">Sort: Recently seen</option>
+            </select>
+            <div class="dt-rec-tree-actions" id="dt-rec-tree-actions">
+              <button class="dt-rec-mini-btn" id="dt-rec-expand-all" type="button" title="Expand all buckets and folders">Expand</button>
+              <button class="dt-rec-mini-btn" id="dt-rec-collapse-all" type="button" title="Collapse all buckets and folders">Collapse</button>
+            </div>
+            <span class="dt-rec-match-count" id="dt-rec-match-count"></span>
+          </div>
+        </div>
         <div id="dt-rec-results-list">
           <div class="dt-bench-capture-empty" id="dt-rec-results-empty">Enable recording, then browse target URLs — discovered endpoints will appear here.</div>
+          <div class="dt-bench-capture-empty" id="dt-rec-no-match" style="display:none"></div>
         </div>
       </div>
     `;
@@ -641,7 +666,7 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     list.innerHTML = '';
     if (!state.recorder.targets.length) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'font-size:11px;color:var(--mu);font-style:italic;padding:4px 2px';
+      empty.style.cssText = 'font-size:calc(11px*var(--dt-fs,1));color:var(--mu);font-style:italic;padding:4px 2px';
       empty.textContent = 'No targets yet — add a URL or attach a Base URL group above.';
       list.appendChild(empty);
     }
@@ -694,6 +719,137 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     });
   }
 
+  // ── UI: search, sort, tree ──────────────────────────────────────────────────
+  // The list is rebuilt from scratch on every (debounced) capture, so what's
+  // expanded lives here — not in the DOM — or it would snap shut whenever the
+  // site made a request. Keys are scoped by display bucket.
+  const openBuckets = new Set();       // bucket.key
+  const openEndpoints = new Set();     // `${bucket.key}|${method} ${path}`
+  const folderOpen = new Map();        // `${bucket.key}|${folderPath}` → bool (default: top level open)
+  // While a search is active everything matching is shown expanded; these hold
+  // what the user collapsed during THIS search (reset whenever the query changes).
+  const searchClosedBuckets = new Set(), searchClosedFolders = new Set();
+
+  const METHOD_WORDS = new Set(ALL_METHODS.map(m => m.toLowerCase()));
+  // Space-separated terms, all of which must match. A bare HTTP method filters
+  // by method (several methods = any of them); anything else matches anywhere
+  // in the path (or the exposed backend path), with * as a wildcard.
+  function parseRecorderSearch(q) {
+    const methods = [], terms = [];
+    String(q || '').trim().split(/\s+/).filter(Boolean).forEach(tok => {
+      if (METHOD_WORDS.has(tok.toLowerCase())) { methods.push(tok.toUpperCase()); return; }
+      const source = tok.split('*').map(s => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*');
+      if (source.replace(/\.\*/g, '')) terms.push(new RegExp(source, 'i'));
+    });
+    return { methods, terms, active: methods.length + terms.length > 0 };
+  }
+  function endpointMatches(ep, search) {
+    if (!search.active) return true;
+    if (search.methods.length && !search.methods.includes(ep.method)) return false;
+    return search.terms.every(re => re.test(ep.path) || (!!ep.backendPath && re.test(ep.backendPath)));
+  }
+  // Path as HTML with search hits highlighted, starting at `from` (tree rows
+  // show the path relative to their folder).
+  function pathHtml(path, search, from) {
+    const marks = new Uint8Array(path.length);
+    search.terms.forEach(re => {
+      for (const m of path.matchAll(new RegExp(re.source, 'gi'))) {
+        for (let i = m.index; i < m.index + m[0].length; i++) marks[i] = 1;
+      }
+    });
+    let html = '', i = from;
+    while (i < path.length) {
+      let j = i;
+      while (j < path.length && marks[j] === marks[i]) j++;
+      const text = escHtml(path.slice(i, j));
+      html += marks[i] ? `<mark class="dt-rec-hl">${text}</mark>` : text;
+      i = j;
+    }
+    return html || '/';
+  }
+
+  const RECORDER_SORTS = {
+    path: comparePathSegments,
+    method: (a, b) => ((METHOD_ORDER[a.method] ?? 9) - (METHOD_ORDER[b.method] ?? 9)) || a.path.localeCompare(b.path),
+    hits: (a, b) => (b.count - a.count) || comparePathSegments(a, b),
+    recent: (a, b) => ((b.lastSeen || 0) - (a.lastSeen || 0)) || comparePathSegments(a, b),
+  };
+  const recorderSort = () => RECORDER_SORTS[state.recorder.sort] || RECORDER_SORTS.path;
+
+  // Folder tree for the in-app Tree view (by the observed path, which is what
+  // the rows show — Postman export folders use backendPath instead).
+  function buildDisplayTree(endpoints) {
+    const rootNode = { name: '', path: '', children: new Map(), endpoints: [] };
+    endpoints.forEach(ep => {
+      let node = rootNode;
+      ep.path.split('/').filter(Boolean).forEach(seg => {
+        if (!node.children.has(seg)) node.children.set(seg, { name: seg, path: node.path + '/' + seg, children: new Map(), endpoints: [] });
+        node = node.children.get(seg);
+      });
+      node.endpoints.push(ep);
+    });
+    return rootNode;
+  }
+  function countTreeEndpoints(node) { let n = node.endpoints.length; node.children.forEach(c => { n += countTreeEndpoints(c); }); return n; }
+  // Only segments with something nested under them become folders (a leaf's
+  // endpoints are listed in its parent), and single-child chains with no
+  // endpoints of their own collapse into one row — "api/v1" instead of
+  // "api" › "v1".
+  function treeFolders(node) {
+    const folders = [], rows = [...node.endpoints];
+    [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name)).forEach(child => {
+      if (!child.children.size) { rows.push(...child.endpoints); return; }
+      let name = child.name, target = child;
+      while (!target.endpoints.length && target.children.size === 1) {
+        const only = target.children.values().next().value;
+        if (!only.children.size) break;
+        name += '/' + only.name; target = only;
+      }
+      folders.push({ name, node: target });
+    });
+    return { rows, folders };
+  }
+  function forEachFolderKey(bucket, endpoints, fn) {
+    const walk = node => treeFolders(node).folders.forEach(f => { fn(bucket.key + '|' + f.node.path); walk(f.node); });
+    walk(buildDisplayTree(endpoints));
+  }
+
+  function renderTreeLevel(container, node, bucket, search, depth) {
+    const { rows, folders } = treeFolders(node);
+    // Rows show their path from the folder's own segment on ("/orders",
+    // "/orders/history") — relative to the folder itself, its own endpoint
+    // would read as a bare, ambiguous "/".
+    const base = node.path.slice(0, node.path.lastIndexOf('/') + 1).replace(/\/$/, '');
+    rows.sort(recorderSort()).forEach(ep => container.appendChild(buildEndpointRow(ep, bucket, search, depth, base)));
+    folders.forEach(folder => container.appendChild(buildFolder(folder, bucket, search, depth)));
+  }
+  function buildFolder({ name, node }, bucket, search, depth) {
+    const key = bucket.key + '|' + node.path;
+    const isOpen = () => (search.active ? !searchClosedFolders.has(key) : (folderOpen.has(key) ? folderOpen.get(key) : depth === 0));
+    const el = document.createElement('div');
+    el.className = 'dt-rec-folder';
+    el.style.setProperty('--depth', depth);
+    el.innerHTML = `
+      <div class="dt-rec-folder-head" title="${escHtml(node.path)}">
+        <span class="dt-rec-folder-arrow">${icon('chevronRight', 11, 2.4)}</span>
+        <span class="dt-rec-folder-icon">${icon('folder', 13, 1.9)}</span>
+        <span class="dt-rec-folder-name">${pathHtml(name, search, 0)}</span>
+        <span class="dt-rec-folder-count">${countTreeEndpoints(node)}</span>
+      </div>
+      <div class="dt-rec-folder-body"></div>`;
+    const body = el.querySelector('.dt-rec-folder-body');
+    const renderBody = () => { if (!body._rendered) { renderTreeLevel(body, node, bucket, search, depth + 1); body._rendered = true; } };
+    if (isOpen()) { el.classList.add('open'); renderBody(); }
+    el.querySelector('.dt-rec-folder-head').addEventListener('click', () => {
+      const open = !el.classList.contains('open');
+      if (search.active) { if (open) searchClosedFolders.delete(key); else searchClosedFolders.add(key); }
+      else folderOpen.set(key, open);
+      el.classList.toggle('open', open);
+      if (open) renderBody();
+    });
+    return el;
+  }
+
   // ── UI: recorded results ────────────────────────────────────────────────────
   function renderRecorderList() {
     const list = $('dt-rec-results-list');
@@ -707,18 +863,29 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
       ? $('dt-rec-kebab-portal')._bucketKey : null;
     closeKebabMenu();
     [...list.querySelectorAll('.dt-rec-bucket')].forEach(el => el.remove());
+    syncRecorderToolbar();
+    const noMatch = $('dt-rec-no-match');
+    const countEl = $('dt-rec-match-count');
     const buckets = getDisplayBuckets().sort((a,b) => Object.keys(b.endpoints).length - Object.keys(a.endpoints).length);
-    if (!buckets.length) { if (emptyMsg) emptyMsg.style.display = ''; return; }
+    if (noMatch) noMatch.style.display = 'none';
+    if (!buckets.length) { if (emptyMsg) emptyMsg.style.display = ''; if (countEl) countEl.textContent = ''; return; }
     if (emptyMsg) emptyMsg.style.display = 'none';
+    const search = parseRecorderSearch(state.recorder.search);
+    let total = 0, shown = 0;
     buckets.forEach(bucket => {
-      const epCount = Object.keys(bucket.endpoints).length;
+      const allEndpoints = Object.values(bucket.endpoints);
+      const endpoints = allEndpoints.filter(ep => endpointMatches(ep, search));
+      total += allEndpoints.length; shown += endpoints.length;
+      if (search.active && !endpoints.length) return;
+      const epCount = allEndpoints.length;
+      const countText = search.active ? `${endpoints.length} of ${epCount}` : `${epCount} endpoint${epCount!==1?'s':''}`;
       const el = document.createElement('div');
       el.className = 'dt-rec-bucket';
       el.innerHTML = `
         <div class="dt-rec-bucket-head">
           <span class="dt-rec-bucket-arrow">${icon('chevronRight',11,2.4)}</span>
           <span class="dt-rec-bucket-label">${escHtml(bucket.label)}</span>
-          <span class="dt-rec-bucket-count">${epCount} endpoint${epCount!==1?'s':''}</span>
+          <span class="dt-rec-bucket-count">${countText}</span>
           <button class="dt-rec-kebab-btn" data-act="kebab" title="Actions">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
           </button>
@@ -727,10 +894,14 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
       `;
       const head = el.querySelector('.dt-rec-bucket-head');
       const body = el.querySelector('.dt-rec-bucket-body');
+      const renderBody = () => { if (!body._rendered) { renderEndpointsInto(body, bucket, endpoints, search); body._rendered = true; } };
+      if (search.active ? !searchClosedBuckets.has(bucket.key) : openBuckets.has(bucket.key)) { el.classList.add('open'); renderBody(); }
       head.addEventListener('click', e => {
         if (e.target.closest('.dt-rec-kebab-btn')) return;
-        el.classList.toggle('open');
-        if (el.classList.contains('open') && !body._rendered) { renderEndpointsInto(body, bucket); body._rendered = true; }
+        const open = el.classList.toggle('open');
+        if (search.active) { if (open) searchClosedBuckets.delete(bucket.key); else searchClosedBuckets.add(bucket.key); }
+        else if (open) openBuckets.add(bucket.key); else openBuckets.delete(bucket.key);
+        if (open) renderBody();
       });
       const kebabBtn = el.querySelector('[data-act="kebab"]');
       kebabBtn.addEventListener('click', e => {
@@ -740,6 +911,34 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
       if (reopenKebabFor && bucket.key === reopenKebabFor) toggleKebabMenu(kebabBtn, bucket);
       list.appendChild(el);
     });
+    if (countEl) countEl.textContent = search.active ? `${shown} of ${total} match` : `${total} endpoint${total!==1?'s':''}`;
+    if (noMatch && search.active && !shown) {
+      noMatch.textContent = `No endpoints match “${state.recorder.search.trim()}”.`;
+      noMatch.style.display = '';
+    }
+  }
+
+  function syncRecorderToolbar() {
+    const view = state.recorder.view === 'tree' ? 'tree' : 'list';
+    $$('#dt-rec-view-toggle .dt-side-btn').forEach(b => b.classList.toggle('active', b.dataset.recview === view));
+    const sort = $('dt-rec-sort'); if (sort && sort.value !== state.recorder.sort) sort.value = state.recorder.sort;
+    const wrap = $('dt-rec-search-wrap'); if (wrap) wrap.classList.toggle('has-value', !!state.recorder.search);
+  }
+
+  // Expand/collapse every bucket and folder (respecting the current search).
+  function setAllRecorderOpen(open) {
+    const search = parseRecorderSearch(state.recorder.search);
+    getDisplayBuckets().forEach(bucket => {
+      const endpoints = Object.values(bucket.endpoints).filter(ep => endpointMatches(ep, search));
+      if (search.active) {
+        if (open) searchClosedBuckets.delete(bucket.key); else searchClosedBuckets.add(bucket.key);
+        forEachFolderKey(bucket, endpoints, key => { if (open) searchClosedFolders.delete(key); else searchClosedFolders.add(key); });
+      } else {
+        if (open) openBuckets.add(bucket.key); else openBuckets.delete(bucket.key);
+        forEachFolderKey(bucket, endpoints, key => folderOpen.set(key, open));
+      }
+    });
+    renderRecorderList();
   }
 
   // Single shared dropdown "portal", appended directly to <body>. Bucket cards
@@ -824,28 +1023,37 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     });
   }
 
-  function renderEndpointsInto(container, bucket) {
+  function renderEndpointsInto(container, bucket, endpoints, search) {
     container.innerHTML = '';
-    Object.values(bucket.endpoints).sort(comparePathSegments).forEach(ep => {
-      const row = document.createElement('div');
-      row.className = 'dt-rec-endpoint';
-      const color = METHOD_COLORS[ep.method] || '#555';
-      row.innerHTML = `
-        <div class="dt-rec-endpoint-head">
-          <span class="dt-rec-endpoint-method" style="background:${color}">${ep.method}</span>
-          <span class="dt-rec-endpoint-path">${escHtml(ep.path)}</span>
-          <span class="dt-rec-endpoint-count">×${ep.count}</span>
-        </div>
-        <div class="dt-rec-endpoint-body"></div>
-      `;
-      const head = row.querySelector('.dt-rec-endpoint-head');
-      const body = row.querySelector('.dt-rec-endpoint-body');
-      head.addEventListener('click', () => {
-        row.classList.toggle('open');
-        if (row.classList.contains('open') && !body._rendered) { renderEndpointDetail(body, ep); body._rendered = true; }
-      });
-      container.appendChild(row);
+    if (state.recorder.view === 'tree') { renderTreeLevel(container, buildDisplayTree(endpoints), bucket, search, 0); return; }
+    endpoints.slice().sort(recorderSort()).forEach(ep => container.appendChild(buildEndpointRow(ep, bucket, search, 0, '')));
+  }
+  // basePath: prefix hidden in tree rows (the enclosing folder's parent path);
+  // the full path is always in the row's tooltip.
+  function buildEndpointRow(ep, bucket, search, depth, basePath) {
+    const key = `${bucket.key}|${ep.method} ${ep.path}`;
+    const row = document.createElement('div');
+    row.className = 'dt-rec-endpoint';
+    row.style.setProperty('--depth', depth);
+    const color = METHOD_COLORS[ep.method] || '#555';
+    const from = basePath && ep.path.startsWith(basePath) ? basePath.length : 0;
+    row.innerHTML = `
+      <div class="dt-rec-endpoint-head" title="${escHtml(ep.method + ' ' + ep.path)}">
+        <span class="dt-rec-endpoint-method" style="background:${color}">${ep.method}</span>
+        <span class="dt-rec-endpoint-path">${pathHtml(ep.path, search, from)}</span>
+        <span class="dt-rec-endpoint-count">×${ep.count}</span>
+      </div>
+      <div class="dt-rec-endpoint-body"></div>
+    `;
+    const head = row.querySelector('.dt-rec-endpoint-head');
+    const body = row.querySelector('.dt-rec-endpoint-body');
+    const renderBody = () => { if (!body._rendered) { renderEndpointDetail(body, ep); body._rendered = true; } };
+    if (openEndpoints.has(key)) { row.classList.add('open'); renderBody(); }
+    head.addEventListener('click', () => {
+      const open = row.classList.toggle('open');
+      if (open) { openEndpoints.add(key); renderBody(); } else openEndpoints.delete(key);
     });
+    return row;
   }
 
   // Renders a schema key, stripping the internal "?" presence-marker and
@@ -965,6 +1173,34 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
       baseUrlSel.value = '';
     });
 
+    // ── Search / view / sort ──
+    const searchInput = $('dt-rec-search');
+    let searchTimer = null;
+    const applySearch = value => {
+      state.recorder.search = value;
+      searchClosedBuckets.clear(); searchClosedFolders.clear();
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(renderRecorderList, 120);
+      syncRecorderToolbar();
+    };
+    searchInput.addEventListener('input', () => applySearch(searchInput.value));
+    searchInput.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && searchInput.value) { e.stopPropagation(); searchInput.value = ''; applySearch(''); }
+    });
+    $('dt-rec-search-clear').addEventListener('click', () => { searchInput.value = ''; applySearch(''); searchInput.focus(); });
+    $$('#dt-rec-view-toggle .dt-side-btn').forEach(btn => btn.addEventListener('click', () => {
+      state.recorder.view = btn.dataset.recview;
+      Store.set('rec.view', state.recorder.view);
+      renderRecorderList();
+    }));
+    $('dt-rec-sort').addEventListener('change', e => {
+      state.recorder.sort = e.target.value;
+      Store.set('rec.sort', state.recorder.sort);
+      renderRecorderList();
+    });
+    $('dt-rec-expand-all').addEventListener('click', () => setAllRecorderOpen(true));
+    $('dt-rec-collapse-all').addEventListener('click', () => setAllRecorderOpen(false));
+
     $('dt-rec-clear-all').addEventListener('click', () => {
       if (!confirm('Clear all recorded endpoints? This cannot be undone.')) return;
       state.recorder.data = {};
@@ -1003,6 +1239,9 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
       data:     Store.get('rec.data', {}),
       postmanApiKey: Store.get('rec.postmanApiKey', ''),
       postmanCollectionIds: Store.get('rec.postmanCollectionIds', {}),
+      view:     Store.get('rec.view', 'list'),   // 'list' | 'tree'
+      sort:     Store.get('rec.sort', 'path'),   // key of RECORDER_SORTS
+      search:   '',                              // per-tab, not persisted
     };
   }
 
@@ -1015,6 +1254,8 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     'rec.targets':   () => { state.recorder.targets = Store.get('rec.targets', []); renderRecorderTargets(); },
     'rec.data':      () => { state.recorder.data = Store.get('rec.data', {}); renderRecorderList(); },
     'rec.postmanApiKey': () => { state.recorder.postmanApiKey = Store.get('rec.postmanApiKey', ''); const el = $('dt-set-postman-key'); if (el) el.value = state.recorder.postmanApiKey; ctx.updatePostmanKeyWarning && ctx.updatePostmanKeyWarning(); },
+    'rec.view':      () => { state.recorder.view = Store.get('rec.view', 'list'); renderRecorderList(); },
+    'rec.sort':      () => { state.recorder.sort = Store.get('rec.sort', 'path'); renderRecorderList(); },
     'rec.postmanCollectionIds': () => { state.recorder.postmanCollectionIds = Store.get('rec.postmanCollectionIds', {}); },
   };
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Bench Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.14
+// @version      3.6.16
 // @description  Bench plugin for DevTools Sidebar — manual or captured request benchmarking with concurrency, warmup, and a results sparkline.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -598,11 +598,11 @@ DT_registerPlugin(function createBenchPlugin(ctx) {
     const avgColor  = avg < 200 ? 'good' : avg < 800 ? 'warn' : 'bad';
 
     $('dt-bench-stats').innerHTML = `
-      <div class="dt-bench-stat"><div class="dt-bench-stat-val ${avgColor}">${avg.toFixed(0)}<span style="font-size:11px">ms</span></div><div class="dt-bench-stat-lbl">Average</div></div>
-      <div class="dt-bench-stat"><div class="dt-bench-stat-val">${min.toFixed(0)}<span style="font-size:11px">ms</span></div><div class="dt-bench-stat-lbl">Min</div></div>
-      <div class="dt-bench-stat"><div class="dt-bench-stat-val">${max.toFixed(0)}<span style="font-size:11px">ms</span></div><div class="dt-bench-stat-lbl">Max</div></div>
-      <div class="dt-bench-stat"><div class="dt-bench-stat-val">${p50.toFixed(0)}<span style="font-size:11px">ms</span></div><div class="dt-bench-stat-lbl">p50</div></div>
-      <div class="dt-bench-stat"><div class="dt-bench-stat-val">${p95.toFixed(0)}<span style="font-size:11px">ms</span></div><div class="dt-bench-stat-lbl">p95</div></div>
+      <div class="dt-bench-stat"><div class="dt-bench-stat-val ${avgColor}">${avg.toFixed(0)}<span style="font-size:calc(11px*var(--dt-fs,1))">ms</span></div><div class="dt-bench-stat-lbl">Average</div></div>
+      <div class="dt-bench-stat"><div class="dt-bench-stat-val">${min.toFixed(0)}<span style="font-size:calc(11px*var(--dt-fs,1))">ms</span></div><div class="dt-bench-stat-lbl">Min</div></div>
+      <div class="dt-bench-stat"><div class="dt-bench-stat-val">${max.toFixed(0)}<span style="font-size:calc(11px*var(--dt-fs,1))">ms</span></div><div class="dt-bench-stat-lbl">Max</div></div>
+      <div class="dt-bench-stat"><div class="dt-bench-stat-val">${p50.toFixed(0)}<span style="font-size:calc(11px*var(--dt-fs,1))">ms</span></div><div class="dt-bench-stat-lbl">p50</div></div>
+      <div class="dt-bench-stat"><div class="dt-bench-stat-val">${p95.toFixed(0)}<span style="font-size:calc(11px*var(--dt-fs,1))">ms</span></div><div class="dt-bench-stat-lbl">p95</div></div>
       <div class="dt-bench-stat"><div class="dt-bench-stat-val ${rateColor}">${successRate}%</div><div class="dt-bench-stat-lbl">Success</div></div>
     `;
 
@@ -672,7 +672,7 @@ DT_registerPlugin(function createBenchPlugin(ctx) {
     // Pill: method + short URL
     const shortUrl = (() => { try { const u = new URL(request.url); return u.pathname + (u.search.length > 20 ? u.search.slice(0,20)+'…' : u.search); } catch { return request.url; } })();
     const pill = $('dt-bench-last-result-pill');
-    if (pill) pill.innerHTML = `<span style="background:${color};color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;font-family:'IBM Plex Mono',monospace">${escHtml(request.method)}</span><span style="font-size:11px;color:var(--tx2);font-family:'IBM Plex Mono',monospace;margin-left:5px">${escHtml(shortUrl)}</span>`;
+    if (pill) pill.innerHTML = `<span style="background:${color};color:#fff;font-size:calc(9px*var(--dt-fs,1));font-weight:700;padding:1px 5px;border-radius:3px;font-family:'IBM Plex Mono',monospace">${escHtml(request.method)}</span><span style="font-size:calc(11px*var(--dt-fs,1));color:var(--tx2);font-family:'IBM Plex Mono',monospace;margin-left:5px">${escHtml(shortUrl)}</span>`;
 
     // URL row
     const urlEl = $('dt-bench-last-url');

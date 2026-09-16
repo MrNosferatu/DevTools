@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Base URL Switcher Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.14
+// @version      3.6.16
 // @description  Base URL Switcher plugin for DevTools Sidebar — a floating button for swapping between configured environments (prod/staging/...) on matching pages.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -24,7 +24,7 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
           <div class="dt-row-label" style="display:flex;align-items:center;gap:5px">Enable globally</div>
           <label class="dt-toggle"><input type="checkbox" id="dt-baseurl-enabled"><div class="dt-toggle-track"><div class="dt-toggle-thumb"></div></div></label>
         </div>
-        <div class="dt-row-sub" style="margin-bottom:14px;color:var(--mu);font-size:11px">When enabled, a floating button appears on matching pages letting you swap the base URL.</div>
+        <div class="dt-row-sub" style="margin-bottom:14px;color:var(--mu);font-size:calc(11px*var(--dt-fs,1))">When enabled, a floating button appears on matching pages letting you swap the base URL.</div>
       </div>
       <div class="dt-section" id="dt-baseurl-groups-section">
         <div class="dt-slabel">URL Groups</div>
@@ -191,14 +191,14 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
     cont.innerHTML = '';
     if (hosts.size === 0) {
       const empty = document.createElement('span');
-      empty.style.cssText = 'color:var(--mu);font-size:10px;font-style:italic';
+      empty.style.cssText = 'color:var(--mu);font-size:calc(10px*var(--dt-fs,1));font-style:italic';
       empty.textContent = 'Add URLs below to activate';
       cont.appendChild(empty);
       return;
     }
     hosts.forEach(host => {
       const tag = document.createElement('span');
-      tag.style.cssText = 'display:inline-block;font-size:10px;padding:1px 6px;border-radius:10px;background:var(--sf2);color:var(--tx2);border:1px solid var(--bd);font-family:monospace';
+      tag.style.cssText = 'display:inline-block;font-size:calc(10px*var(--dt-fs,1));padding:1px 6px;border-radius:10px;background:var(--sf2);color:var(--tx2);border:1px solid var(--bd);font-family:monospace';
       tag.textContent = host;
       cont.appendChild(tag);
     });
@@ -347,7 +347,7 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
       if (group.entries.length === 0) return;
       const activeEntry = getActiveEntry(group);
       const header = document.createElement('div');
-      header.style.cssText = 'padding:4px 10px 2px;font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--mu);';
+      header.style.cssText = 'padding:4px 10px 2px;font-size:calc(9px*var(--dt-fs,1));font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--mu);';
       header.textContent = group.label;
       fabMenu.appendChild(header);
       group.entries.forEach(entry => {

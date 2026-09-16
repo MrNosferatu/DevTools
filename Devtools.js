@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.14
+// @version      3.6.16
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -108,6 +108,15 @@
       customTx:   Store.get('layout.customTx', ''),
       customBd:   Store.get('layout.customBd', ''),
     },
+    // ── Interface (whole UI, not the code editor) ─────────────────────────────
+    // fontScale is a percentage multiplier on every UI font size: all CSS
+    // font-sizes are written as calc(Npx*var(--dt-fs,1)), and --dt-fs is set on
+    // #dt-root by applyInterfaceSettings().
+    ui: {
+      fontScale:    Store.get('ui.fontScale', 100),
+      font:         Store.get('ui.font', 'plex'),
+      reduceMotion: Store.get('ui.reduceMotion', false),
+    },
     resPresets: Store.get('res.presets', []),
     // ── Keyboard shortcuts ────────────────────────────────────────────────────
     // Global hotkeys for quickly toggling interception without opening the
@@ -171,6 +180,9 @@
     // Per-plugin storage-sync handlers (e.g. 'rec.*', 'mon.*', 'baseurl.*',
     // 'bench.*') are merged in below, once plugin factories have run.
 
+    'forceDark.origins':  () => { applyForceDarkIfEnabled(); updateForceDarkBtn(); },
+    'forceDark.engine':   () => { applyForceDarkIfEnabled(); syncForceDarkEngineUI(); },
+
     'layout.side':        () => { state.layout.side = Store.get('layout.side', 'right'); applyLayout(true); },
     'layout.width':       () => { state.layout.width = Store.get('layout.width', 360); applyLayout(true); },
     'layout.appearance':  () => { state.layout.appearance = Store.get('layout.appearance', 'light'); applySidebarTheme(); },
@@ -180,6 +192,10 @@
     'layout.customSf':    () => { state.layout.customSf = Store.get('layout.customSf', ''); applySidebarTheme(); },
     'layout.customTx':    () => { state.layout.customTx = Store.get('layout.customTx', ''); applySidebarTheme(); },
     'layout.customBd':    () => { state.layout.customBd = Store.get('layout.customBd', ''); applySidebarTheme(); },
+
+    'ui.fontScale':    () => { state.ui.fontScale = Store.get('ui.fontScale', 100); applyInterfaceSettings(); },
+    'ui.font':         () => { state.ui.font = Store.get('ui.font', 'plex'); applyInterfaceSettings(); },
+    'ui.reduceMotion': () => { state.ui.reduceMotion = Store.get('ui.reduceMotion', false); applyInterfaceSettings(); },
 
     'ed.theme':      () => { state.editorSettings.theme = Store.get('ed.theme', 'catppuccin'); applyEditorTheme(); },
     'ed.font':       () => { state.editorSettings.font = Store.get('ed.font', 'ibm'); applyEditorTheme(); },
@@ -334,6 +350,7 @@
     bindUI();
     syncNetworkPanel();
     applyEditorTheme();
+    applyInterfaceSettings();
     applyLayout();
     populateSidebarSettings();
     syncAutoTransformUI();
@@ -399,15 +416,46 @@
     `;
   }
 
+  // ─── Interface settings (UI font size / font / motion) ───────────────────────
+  // Everything the UI renders mounts inside #dt-root, so custom properties set
+  // there reach the sidebar, modals, FAB, tooltips and plugin overlays alike.
+  // The code editor keeps its own size (--dt-ed-fs / Editor Font Size).
+  const UI_FONT_SCALE_MIN = 80, UI_FONT_SCALE_MAX = 150;
+  function applyInterfaceSettings() {
+    const mount = rootMount(); if (!mount) return;
+    const { fontScale, font, reduceMotion } = state.ui;
+    const scale = Math.max(UI_FONT_SCALE_MIN, Math.min(UI_FONT_SCALE_MAX, parseInt(fontScale) || 100)) / 100;
+    const uiFont = (UI_FONTS.find(x => x.id === font) || UI_FONTS[0]).css;
+    let styleTag = $('dt-ui-settings-style');
+    if (!styleTag) { styleTag = document.createElement('style'); styleTag.id = 'dt-ui-settings-style'; mount.appendChild(styleTag); }
+    styleTag.textContent = `
+      #dt-root { --dt-fs:${scale}; --dt-ui-font:${uiFont}; }
+      ${reduceMotion ? `#dt-root *, #dt-root *::before, #dt-root *::after { transition-duration:0s !important; transition-delay:0s !important; animation-duration:0s !important; animation-iteration-count:1 !important; }` : ''}
+    `;
+    syncInterfaceSettingControls();
+  }
+  function syncInterfaceSettingControls() {
+    const { fontScale, font, reduceMotion } = state.ui;
+    const sl = $('dt-ui-fs-slider'), vi = $('dt-ui-fs-val');
+    if (sl) sl.value = fontScale; if (vi) vi.value = fontScale + '%';
+    $$('#dt-ui-font-toggle .dt-side-btn').forEach(b => b.classList.toggle('active', b.dataset.uifont === font));
+    const rm = $('dt-ui-reduce-motion'); if (rm) rm.checked = !!reduceMotion;
+  }
+
   // ─── Force Dark (per-site) ────────────────────────────────────────────────────
-  // A brute-force "dark mode" for sites that ship no dark theme. It inverts the
-  // whole page (approximate: hue-rotate(180) keeps hues roughly, colours aren't
-  // truly remapped) and re-inverts images/video/media so they look normal. NOT
-  // the site's own dark mode — a userscript can't force prefers-color-scheme, so
-  // this is the universal fallback. Persisted per origin and injected at
-  // document-start so it applies before first paint (no white flash).
+  // A "dark mode" for sites that ship no dark theme. NOT the site's own dark
+  // mode — a userscript can't force prefers-color-scheme — so this is the
+  // universal fallback. Persisted per origin and applied at document-start.
+  // Two engines (Settings → Force Dark):
+  //   'smart'  (default) — DT_createDarkEngine in Devtools_darkmode.js rewrites
+  //            the page's colours and classifies icons/SVGs/images individually,
+  //            so media keep their true colours and dark icons turn light.
+  //   'filter' (legacy)  — inverts the whole page with a CSS filter and
+  //            re-inverts media. Works on anything (canvas UIs, unreadable
+  //            styles) but can't restore saturated media colours — see the
+  //            header of Devtools_darkmode.js for why.
   //
-  // The invert is applied to `html > :not(#dt-host)`, NOT to `html` itself, so
+  // Filter engine: the invert is applied to `html > :not(#dt-host)`, NOT to `html` itself, so
   // our shadow host (#dt-host) is excluded — this both keeps the sidebar's own
   // colours intact and avoids a root-level filter reparenting the sidebar's
   // position:fixed layers. Media re-inversion targets light-DOM elements only;
@@ -425,7 +473,26 @@
     'html{background:#111 !important;}' +
     'html>:not(#dt-host){filter:invert(1) hue-rotate(180deg) !important;}' +
     'img,picture,video,canvas,svg image,iframe,embed,object,' +
-    '[style*="background-image"],[style*="url("]{filter:invert(1) hue-rotate(180deg) !important;}';
+    '[style*="background-image"],[style*="url("]{filter:invert(1) hue-rotate(180deg) !important;}' +
+    // Media nested inside re-inverted media (<picture><img>, an <img> in an
+    // inline background-image box) would be inverted a THIRD time — undo that.
+    ':is(img,picture,video,canvas,iframe,embed,object,[style*="background-image"],[style*="url("]) :is(img,picture,video,canvas,iframe,embed,object){filter:none !important;}';
+  const FORCE_DARK_ENGINE_KEY = 'forceDark.engine';
+  function forceDarkEngineName() { return Store.get(FORCE_DARK_ENGINE_KEY, 'smart') === 'filter' ? 'filter' : 'smart'; }
+  let _darkEngine = null;
+  function darkEngine() {
+    if (!_darkEngine && typeof DT_createDarkEngine === 'function') {
+      _darkEngine = DT_createDarkEngine({
+        window: realWindow,
+        // Stylesheet fetches must bypass our own interceptor (no modal, no Monitor rows).
+        fetch: (...args) => (_nativeFetch || _fetch || realWindow.fetch)(...args),
+        // Provided by the browser-extension build: fetches cross-origin CSS and
+        // icons through the extension, so they can be read without CORS.
+        fetchExternal: typeof DT_extFetch === 'function' ? DT_extFetch : null,
+      });
+    }
+    return _darkEngine;
+  }
   function forceDarkOrigins() { const v = Store.get(FORCE_DARK_KEY, {}); return (v && typeof v === 'object') ? v : {}; }
   function forceDarkMode() {
     const v = forceDarkOrigins()[location.origin];
@@ -459,6 +526,11 @@
     return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
   }
   function applyForceDarkStyle(active) {
+    const engine = active && forceDarkEngineName() === 'smart' ? darkEngine() : null;
+    if (engine) engine.enable(); else if (_darkEngine) _darkEngine.disable();
+    applyForceDarkFilter(active && !engine);
+  }
+  function applyForceDarkFilter(active) {
     const ID = 'dt-force-dark-style';
     let el = document.getElementById(ID);
     if (active) {
@@ -489,6 +561,10 @@
       applyForceDarkStyle(false);
     }
     updateForceDarkBtn();
+  }
+  function syncForceDarkEngineUI() {
+    const name = forceDarkEngineName();
+    $$('#dt-fd-engine-toggle .dt-side-btn').forEach(b => b.classList.toggle('active', b.dataset.fdengine === name));
   }
   function updateForceDarkBtn() {
     const btn = $('dt-force-dark-btn'); if (!btn) return;
@@ -726,7 +802,7 @@
     // Sync settings UI
     const slider = $('dt-sb-width-slider');
     if (slider) { slider.value = width; const wv = $('dt-sb-width-val'); if (wv) wv.value = width; }
-    $$('.dt-side-btn').forEach(b => b.classList.toggle('active', b.dataset.side === side));
+    $$('#dt-sb-side-toggle .dt-side-btn').forEach(b => b.classList.toggle('active', b.dataset.side === side));
   }
 
   // Wires a show/hide eye-icon toggle for a CSS-masked (not type=password) input —
@@ -859,7 +935,7 @@
     }
 
     // ── Position & drag ──────────────────────────────────────────────────────────
-    $$('.dt-side-btn').forEach(btn => {
+    $$('#dt-sb-side-toggle .dt-side-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const tab = $('dt-tab');
         // Instantly reposition without transition when switching sides
@@ -896,6 +972,37 @@
     const wdDec = $('dt-sb-width-dec'), wdInc = $('dt-sb-width-inc');
     if(wdDec) wdDec.addEventListener('click',()=>setLayoutWidth(state.layout.width-4));
     if(wdInc) wdInc.addEventListener('click',()=>setLayoutWidth(state.layout.width+4));
+
+    // ── Interface: UI font size / font / reduce motion ───────────────────────────
+    function commitInterfaceSettings(patch) {
+      Object.assign(state.ui, patch);
+      Object.keys(patch).forEach(k => Store.set('ui.' + k, state.ui[k]));
+      applyInterfaceSettings();
+    }
+    const setUiFontScale = v => commitInterfaceSettings({
+      fontScale: Math.max(UI_FONT_SCALE_MIN, Math.min(UI_FONT_SCALE_MAX, Math.round((parseInt(v) || 100) / 5) * 5)),
+    });
+    const uiFsSlider = $('dt-ui-fs-slider'), uiFsVal = $('dt-ui-fs-val');
+    if (uiFsSlider) uiFsSlider.addEventListener('input', () => setUiFontScale(uiFsSlider.value));
+    if (uiFsVal) uiFsVal.addEventListener('change', () => setUiFontScale(uiFsVal.value)); // parseInt tolerates a trailing "%"
+    const uiFsDec = $('dt-ui-fs-dec'), uiFsInc = $('dt-ui-fs-inc');
+    if (uiFsDec) uiFsDec.addEventListener('click', () => setUiFontScale(state.ui.fontScale - 5));
+    if (uiFsInc) uiFsInc.addEventListener('click', () => setUiFontScale(state.ui.fontScale + 5));
+    $$('#dt-ui-font-toggle .dt-side-btn').forEach(btn =>
+      btn.addEventListener('click', () => commitInterfaceSettings({ font: btn.dataset.uifont })));
+    const uiRm = $('dt-ui-reduce-motion');
+    if (uiRm) uiRm.addEventListener('change', () => commitInterfaceSettings({ reduceMotion: uiRm.checked }));
+    const uiReset = $('dt-ui-settings-reset');
+    if (uiReset) uiReset.addEventListener('click', () => commitInterfaceSettings({ fontScale: 100, font: 'plex', reduceMotion: false }));
+    syncInterfaceSettingControls();
+
+    // ── Force Dark engine ────────────────────────────────────────────────────────
+    $$('#dt-fd-engine-toggle .dt-side-btn').forEach(btn => btn.addEventListener('click', () => {
+      Store.set(FORCE_DARK_ENGINE_KEY, btn.dataset.fdengine);
+      applyForceDarkIfEnabled();
+      syncForceDarkEngineUI();
+    }));
+    syncForceDarkEngineUI();
 
     // ── Appearance mode tabs ─────────────────────────────────────────────────────
     $$('.dt-appearance-tab').forEach(btn => {
@@ -973,7 +1080,7 @@
 
     // ── Font size slider + stepper + input ───────────────────────────────────────
     function setSizeVal(v) {
-      v = Math.max(9, Math.min(18, parseInt(v)||12));
+      v = Math.max(8, Math.min(24, parseInt(v)||12));
       const sl=$('dt-sb-size-slider'), vi=$('dt-sb-size-val');
       if(sl) sl.value = v; if(vi) vi.value = v;
       commitEditorSettings({ fontSize: v });
@@ -1279,6 +1386,9 @@
       if (state.req.persist) Store.set('req.enabled', state.req.enabled);
       syncNetworkPanel();
     });
+
+    // ── Server Action mock mode toggle (request modal) ────────────────────────
+    $$('#dt-req-action-mode .dt-side-btn').forEach(btn => btn.addEventListener('click', () => setServerActionMode(btn.dataset.actmode)));
 
     // ── Mock failure response (drives the request modal's "Mock Fail") ────────
     const mockStatusIn = $('dt-req-mock-status');
@@ -2316,6 +2426,49 @@
     }
   }
 
+  // Server Action panel in the request modal: mode (return value / throw) and
+  // the mocked result, prefilled from this action's last real response.
+  function renderServerActionSection(req) {
+    const sec = $('dt-req-action-section');
+    if (!sec) return;
+    sec.style.display = req.actionId ? '' : 'none';
+    if (!req.actionId) return;
+    $('dt-req-action-id').textContent = req.actionId;
+    $('dt-req-action-id').title = 'Action ID ' + req.actionId;
+    $('dt-req-action-readonly').style.display = req.bodyReadonly ? '' : 'none';
+    const learned = loadActionResult(req.actionId);
+    const valueEl = $('dt-req-action-value'), hint = $('dt-req-action-hint');
+    if (req._actionDraft) {
+      valueEl.value = req._actionDraft.value;
+      $('dt-req-action-error').value = req._actionDraft.message;
+      setServerActionMode(req._actionDraft.mode);
+    } else {
+      valueEl.value = learned && learned.kind === 'return'
+        ? learned.json
+        : (state.req.mockBody || '').trim() || '{\n  "success": false,\n  "error": "Request failed (mocked by DevTools)"\n}';
+      $('dt-req-action-error').value = '';
+      setServerActionMode(learned && learned.kind === 'throw' ? 'throw' : 'return');
+    }
+    hint.textContent = learned
+      ? `Prefilled from this action's last real ${learned.kind === 'throw' ? 'response (it threw)' : 'result'} — edit it into the failure your action returns.`
+      : 'No real result seen for this action yet — send it once to prefill its actual shape.';
+    valueEl.classList.remove('dt-mock-invalid');
+    valueEl.oninput = () => { req._actionDraft = null; valueEl.classList.remove('dt-mock-invalid'); };
+  }
+  function setServerActionMode(mode) {
+    $$('#dt-req-action-mode .dt-side-btn').forEach(b => b.classList.toggle('active', b.dataset.actmode === mode));
+    $('dt-req-action-return').style.display = mode === 'return' ? '' : 'none';
+    $('dt-req-action-throw').style.display = mode === 'throw' ? '' : 'none';
+  }
+  function readServerActionMock() {
+    const mode = $1('#dt-req-action-mode .dt-side-btn.active')?.dataset.actmode || 'return';
+    if (mode === 'throw') return { kind: 'throw', message: $('dt-req-action-error').value.trim() };
+    const el = $('dt-req-action-value'), text = el.value.trim();
+    if (text === '' || text === 'undefined') return { kind: 'return', value: undefined };
+    try { return { kind: 'return', value: JSON.parse(text) }; }
+    catch { el.classList.add('dt-mock-invalid'); el.focus(); return null; }
+  }
+
   function showReqModal(req) {
     const ov=$('dt-req-overlay');
     state.currentReq=req; // used by Edit Memory to scope suggestions to this endpoint
@@ -2332,7 +2485,11 @@
     // out of scope there — clicking Revert threw a ReferenceError.
     let body = req.body || '';
     try { body = JSON.stringify(JSON.parse(body), null, 2); } catch {}
-    if(isGET){
+    const isAction = !!req.actionId;
+    renderServerActionSection(req);
+    if(isAction && req.bodyReadonly){
+      $('dt-req-editor-section').style.display='none';$('dt-req-params-section').style.display='none';
+    }else if(isGET){
       $('dt-req-editor-section').style.display='none';$('dt-req-params-section').style.display='flex';$('dt-req-params-list').innerHTML='';
       const paramsUrl = req._draftUrl || req.url; // queue-nav parks edits as a draft
       try{const u=new URL(paramsUrl.startsWith('http')?paramsUrl:'https://x.com'+paramsUrl);u.searchParams.forEach((v,k)=>addParamRow('dt-req-params-list',k,v));}catch{addParamRow('dt-req-params-list','','');}
@@ -2366,7 +2523,8 @@
         const list = state.pendingReqs;
         if (list.length < 2) return;
         if (isGET) req._draftUrl = buildEditedUrl(req.url, 'dt-req-params-list');
-        else req._draftBody = $('dt-req-ed').value;
+        else if (!req.bodyReadonly) req._draftBody = $('dt-req-ed').value;
+        if (req.actionId) req._actionDraft = { mode: $1('#dt-req-action-mode .dt-side-btn.active')?.dataset.actmode || 'return', value: $('dt-req-action-value').value, message: $('dt-req-action-error').value };
         req._draftHeaders = collectHeaders('dt-req-hinner');
         showReqModal(list[(list.indexOf(req) + dir + list.length) % list.length]);
       });
@@ -2376,9 +2534,14 @@
     ov.classList.add('visible');
     updateModalCounts(); // counter/nav need the visible flag set
     bindModalActions('dt-req-send','dt-req-abort',
-      () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);const editedHeaders=collectHeaders('dt-req-hinner');if(isGET)req.resolve({editedUrl:buildEditedUrl(req.url,'dt-req-params-list'),editedHeaders});else{recordEditFromModal('req',req.url,req.method,req.body,$('dt-req-ed').value);req.resolve({editedBody:$('dt-req-ed').value,editedHeaders});}showNextModal(); },
-      () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);req.reject(new DOMException('Aborted by DevTools','AbortError'));showNextModal(); }
+      () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);const editedHeaders=collectHeaders('dt-req-hinner');if(isGET)req.resolve({editedUrl:buildEditedUrl(req.url,'dt-req-params-list'),editedHeaders});else if(req.bodyReadonly){req.resolve({editedHeaders});}else{recordEditFromModal('req',req.url,req.method,req.body,$('dt-req-ed').value);req.resolve({editedBody:$('dt-req-ed').value,editedHeaders});}showNextModal(); },
+      // Aborting a Server Action crashes the page (see "Next.js Server
+      // Actions"), so for actions this button is "Hang": never answer.
+      () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);if(isAction)req.resolve({hang:true});else req.reject(new DOMException('Aborted by DevTools','AbortError'));showNextModal(); }
     );
+    const abortBtnEl = $('dt-req-abort');
+    abortBtnEl.textContent = isAction ? 'Hang' : 'Abort';
+    abortBtnEl.title = isAction ? "Never answer — the action stays pending, so you can test loading states. (Aborting a Server Action would crash the page.)" : 'Abort — the page sees a network error';
     // Mock Fail — never send the request; answer it with the configured mock
     // failure response instead (fetch/XHR paths fabricate the response from
     // result.mock). Resolved per-URL so Environments overrides apply.
@@ -2390,7 +2553,18 @@
       // failure crashes a frontend-server (e.g. Next.js) page — the caller
       // expects a streamed text/x-component or HTML payload. Leave the request
       // fully editable, but disable Mock Fail for it so it can't be delivered.
-      if (isMockUnsafeReq(req.url, req.headers)) {
+      newMockFail.textContent = isAction ? 'Mock Result' : 'Mock Fail';
+      if (isAction) {
+        newMockFail.title = "Don't send — answer with the mocked action result (or thrown error) set above";
+        newMockFail.addEventListener('click', () => {
+          const mock = readServerActionMock();
+          if (!mock) return; // invalid JSON — the editor is flagged
+          ov.classList.remove('visible');
+          removeFromQueue('pendingReqs', req);
+          req.resolve({ actionMock: mock });
+          showNextModal();
+        });
+      } else if (isMockUnsafeReq(req.url, req.headers)) {
         newMockFail.disabled = true;
         newMockFail.title = "Mock Fail is disabled for framework/navigation requests — a fabricated failure would crash the page. Edit and Send instead.";
       } else {
@@ -2413,7 +2587,7 @@
         ov.classList.remove('visible');
         removeFromQueue('pendingReqs', req);
         if (isGET) req.resolve({ editedUrl: req.url, editedHeaders: req.headers });
-        else req.resolve({ editedBody: req.body, editedHeaders: req.headers });
+        else req.resolve({ editedBody: req.bodyReadonly ? undefined : req.body, editedHeaders: req.headers });
         showNextModal();
       });
     }
@@ -2429,7 +2603,7 @@
         queue.forEach(r => {
           const rIsGET = r.method === 'GET';
           if (rIsGET) r.resolve({ editedUrl: r.url, editedHeaders: r.headers });
-          else r.resolve({ editedBody: r.body, editedHeaders: r.headers });
+          else r.resolve({ editedBody: r.bodyReadonly ? undefined : r.body, editedHeaders: r.headers });
         });
         // Disable request interceptor
         state.req.enabled = false;
@@ -2809,6 +2983,115 @@
     return false;
   }
 
+  // ─── Next.js Server Actions ───────────────────────────────────────────────────
+  // A Server Action is the one framework request worth intercepting: the page
+  // POSTs its arguments to the FE server (header `Next-Action: <id>`), the FE
+  // server talks to the real backend, and answers with an RSC ("Flight")
+  // payload the Next client decodes into the action's return value.
+  //
+  // Aborting it or answering with plain JSON can't simulate a backend failure:
+  // Next 15/16 throw "An unexpected response was received from the server" and
+  // Next 14 resolves the action with `undefined` — either way the page crashes
+  // unless it happens to catch that. What the page would really see when the
+  // backend fails is a VALID Flight response whose result is the error object
+  // the action returns (or a thrown-error row). So for actions, "Mock Result"
+  // fabricates exactly that, and "Hang" replaces Abort (never answers, for
+  // testing pending/loading UI without crashing).
+  //
+  // Response root row, per Next's server-action reducer:
+  //   Next ≥ 15: 0:{"a":<result>,"f":""}         (f "" = no UI/router update)
+  //   Next ≤ 14: 0:[<result>,["",null]]          ([result, [buildId, flightData]])
+  // A thrown error is `"a":"$@1"` plus `1:E{"digest":…}` — the production
+  // client only reads `digest`, exactly like a real server-side throw.
+  // Real action responses are also read (never modified) to learn each
+  // action's actual result shape, which prefills the mock editor.
+  function serverActionId(headers) { return readHeader(headers, 'next-action'); }
+  const ACTION_RESULTS_KEY = 'next.actionResults';
+  const ACTION_RESULTS_MAX = 40;
+  let _learnedActionForm = null; // 'object' | 'array', from a real response on this page
+  function nextActionRootForm() {
+    if (_learnedActionForm) return _learnedActionForm;
+    const major = parseInt(String((realWindow.next && realWindow.next.version) || ''), 10);
+    return major && major < 15 ? 'array' : 'object';
+  }
+  function actionResultStoreKey(actionId) { return location.origin + '|' + actionId; }
+  function loadActionResult(actionId) {
+    const all = Store.get(ACTION_RESULTS_KEY, {});
+    return (all && all[actionResultStoreKey(actionId)]) || null;
+  }
+  function saveActionResult(actionId, entry) {
+    let all = Store.get(ACTION_RESULTS_KEY, {});
+    if (!all || typeof all !== 'object') all = {};
+    all[actionResultStoreKey(actionId)] = { ...entry, at: Date.now() };
+    const keys = Object.keys(all);
+    if (keys.length > ACTION_RESULTS_MAX) keys.sort((a, b) => (all[a].at || 0) - (all[b].at || 0)).slice(0, keys.length - ACTION_RESULTS_MAX).forEach(k => delete all[k]);
+    Store.set(ACTION_RESULTS_KEY, all);
+  }
+  // Flight rows are `<hex id>:<payload>` lines; model rows are JSON.
+  function parseFlightRows(text) {
+    const rows = new Map();
+    for (const line of text.split('\n')) {
+      const m = /^([0-9a-f]+):(.*)$/.exec(line);
+      if (m) rows.set(parseInt(m[1], 16), m[2]);
+    }
+    return rows;
+  }
+  // Best-effort decode for DISPLAY: follows "$1"/"$@1" references to JSON rows
+  // and un-escapes "$$"; other special values ($D dates, $n bigints, …) stay as
+  // their raw strings.
+  function decodeFlightValue(v, rows, depth) {
+    if (typeof v === 'string') {
+      if (v[0] !== '$') return v;
+      if (v === '$undefined') return undefined;
+      if (v.startsWith('$$')) return v.slice(1);
+      const ref = /^\$@?([0-9a-f]+)$/.exec(v);
+      const raw = ref && rows.get(parseInt(ref[1], 16));
+      if (raw && depth < 10 && /^[[{"0-9tfn-]/.test(raw)) { try { return decodeFlightValue(JSON.parse(raw), rows, depth + 1); } catch {} }
+      return v;
+    }
+    if (Array.isArray(v)) return v.map(x => decodeFlightValue(x, rows, depth + 1));
+    if (v && typeof v === 'object') { const o = {}; for (const k of Object.keys(v)) o[k] = decodeFlightValue(v[k], rows, depth + 1); return o; }
+    return v;
+  }
+  function encodeFlightValue(v) {
+    if (v === undefined) return '$undefined';
+    if (typeof v === 'string') return v[0] === '$' ? '$' + v : v;
+    if (Array.isArray(v)) return v.map(encodeFlightValue);
+    if (v && typeof v === 'object') { const o = {}; for (const k of Object.keys(v)) o[k] = encodeFlightValue(v[k]); return o; }
+    return v;
+  }
+  // Must be called synchronously when the response arrives (before Next reads
+  // the body) — it tees the body with clone().
+  function learnServerActionResponse(actionId, res) {
+    let copy;
+    try {
+      if (!(res.headers.get('content-type') || '').startsWith('text/x-component') || res.headers.get('x-action-redirect')) return;
+      copy = res.clone();
+    } catch { return; }
+    copy.text().then(text => {
+      const rows = parseFlightRows(text);
+      let root; try { root = JSON.parse(rows.get(0)); } catch { return; }
+      if (!root || typeof root !== 'object') return;
+      _learnedActionForm = Array.isArray(root) ? 'array' : 'object';
+      const a = Array.isArray(root) ? root[0] : root.a;
+      const ref = typeof a === 'string' && /^\$@([0-9a-f]+)$/.exec(a);
+      const refRow = ref ? rows.get(parseInt(ref[1], 16)) || '' : '';
+      if (refRow[0] === 'E') { saveActionResult(actionId, { kind: 'throw' }); return; }
+      const value = decodeFlightValue(a, rows, 0);
+      const json = value === undefined ? 'undefined' : JSON.stringify(value, null, 2);
+      if (json && json.length <= 50000) saveActionResult(actionId, { kind: 'return', json });
+    }).catch(() => {});
+  }
+  // mock: { kind: 'return', value } | { kind: 'throw', message }
+  function buildServerActionResponse(mock) {
+    const form = nextActionRootForm();
+    const root = a => JSON.stringify(form === 'array' ? [a, ['', null]] : { a, f: '' });
+    const rows = mock.kind === 'throw'
+      ? [`0:${root('$@1')}`, `1:E${JSON.stringify({ digest: 'DEVTOOLS_MOCK', message: mock.message || 'Server action failed (mocked by DevTools)', stack: [], env: 'Server' })}`]
+      : [`0:${root(encodeFlightValue(mock.value))}`];
+    return new realWindow.Response(rows.join('\n') + '\n', { status: 200, headers: { 'content-type': 'text/x-component' } });
+  }
+
   // ─── Intercept checks ─────────────────────────────────────────────────────────
   function shouldIntercept(ns,url,method){
     // Plugins can veto interception entirely (e.g. Bench, while a benchmark run
@@ -2965,7 +3248,7 @@
     _toastTimer = setTimeout(() => _toastEl.classList.remove('show'), 1600);
   }
 
-  function queueReq(url,method,headers,body){return new Promise((resolve,reject)=>{const req={url,method,headers,body,resolve,reject};state.pendingReqs.push(req);updateQueueUI('req');showNextModal();});}
+  function queueReq(url,method,headers,body,extra){return new Promise((resolve,reject)=>{const req={url,method,headers,body,...(extra||{}),resolve,reject};state.pendingReqs.push(req);updateQueueUI('req');showNextModal();});}
 
   // ─── Mock failure response ("Mock Fail" in the request modal) ─────────────────
   // Instead of terminating an intercepted request (Abort → the page sees a
@@ -3110,8 +3393,15 @@
           const method = ((init.method || (isReqObj ? input.method : 'GET')) || 'GET').toUpperCase();
           // Next.js framework request (RSC/prefetch/Server Action)? Never touch
           // it — pass straight through with no intercept, no capture.
-          const frameworkInternal = isFrameworkInternalReq(init.headers || (isReqObj ? input.headers : null));
-          if (frameworkInternal) return _fetch(input, isReqObj ? undefined : init);
+          // Exception: Server Actions DO reach the request modal (see "Next.js
+          // Server Actions") — RSC navigations/prefetches never do.
+          const reqHeadersIn = init.headers || (isReqObj ? input.headers : null);
+          const actionId = serverActionId(reqHeadersIn);
+          if (isFrameworkInternalReq(reqHeadersIn) && !(actionId && shouldInterceptReq(url, method))) {
+            const passthrough = _fetch(input, isReqObj ? undefined : init);
+            if (actionId) passthrough.then(res => learnServerActionResponse(actionId, res), () => {});
+            return passthrough;
+          }
           let actualUrl = url, actualInit = init, intercepted = false;
           if (shouldInterceptReq(url, method)) {
             intercepted = true;
@@ -3123,7 +3413,12 @@
             if (init.headers instanceof realWindow.Headers) init.headers.forEach((v, k) => headers[k] = v);
             else if (init.headers) headers = { ...init.headers };
             else if (isReqObj) input.headers.forEach((v, k) => headers[k] = v);
-            const result = await queueReq(url, method, headers, body || '');
+            // A Server Action's multipart payload (FormData/File args) can't be
+            // edited as text — show it read-only and always send the original.
+            const bodyReadonly = !!actionId && body != null && typeof body !== 'string';
+            const result = await queueReq(url, method, headers, bodyReadonly ? '' : (body || ''), actionId ? { actionId, bodyReadonly } : null);
+            if (result.hang) return new realWindow.Promise(() => {});
+            if (result.actionMock) return buildServerActionResponse(result.actionMock);
             // "Mock Fail": the request is never sent — the page receives this
             // fabricated failure response instead (and it deliberately skips
             // response interception: the user already chose the final body).
@@ -3201,6 +3496,7 @@
           let response;
           try { response = await _fetch(rawInput, fetchInit); }
           finally { _seenAdded.forEach(o => { try { _dtSeen.delete(o); } catch {} }); }
+          if (actionId) learnServerActionResponse(actionId, response);
           // Streaming responses (SSE — chat UIs like claude.ai/ChatGPT stream
           // everything this way) must NEVER be cloned/read/held: clone().text()
           // buffers the stream and only resolves when it ENDS (never, for

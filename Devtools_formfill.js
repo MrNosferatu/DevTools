@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Form Autofill Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.14
+// @version      3.6.16
 // @description  Form Autofill plugin for DevTools Sidebar — detect forms on the page, configure per-field fill values (fixed text, dynamic tokens, or defaults for selects/radios/checkboxes), with URL-param conditions, and fill them automatically on load.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -342,7 +342,7 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
           <div class="dt-row-label" style="display:flex;align-items:center;gap:5px">Enable globally</div>
           <label class="dt-toggle"><input type="checkbox" id="dt-ff-enabled"><div class="dt-toggle-track"><div class="dt-toggle-thumb"></div></div></label>
         </div>
-        <div class="dt-row-sub" style="margin-bottom:4px;color:var(--mu);font-size:11px">When enabled, configured forms on matching pages are filled automatically on load.</div>
+        <div class="dt-row-sub" style="margin-bottom:4px;color:var(--mu);font-size:calc(11px*var(--dt-fs,1))">When enabled, configured forms on matching pages are filled automatically on load.</div>
       </div>
       <div class="dt-section">
         <div class="dt-slabel" style="display:flex;align-items:center;justify-content:space-between">

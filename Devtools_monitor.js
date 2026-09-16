@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Network Monitor Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.14
+// @version      3.6.16
 // @description  Network Monitor plugin for DevTools Sidebar — a simple persistent network log with regex/search filtering and literal cURL export.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -15,7 +15,7 @@ DT_registerPlugin(function createMonitorPlugin(ctx) {
     return `
       <div class="dt-section">
         <div class="dt-slabel">Network Monitor</div>
-        <div class="dt-row-sub" style="margin-bottom:14px;color:var(--mu);font-size:11px">A simple, persistent network log — like your browser's DevTools Network tab, but simpler. Captures method, status, headers, and body for every matching request, and keeps the log across page reloads.</div>
+        <div class="dt-row-sub" style="margin-bottom:14px;color:var(--mu);font-size:calc(11px*var(--dt-fs,1))">A simple, persistent network log — like your browser's DevTools Network tab, but simpler. Captures method, status, headers, and body for every matching request, and keeps the log across page reloads.</div>
         <div class="dt-row" style="margin-bottom:0">
           <div class="dt-row-label">Monitor requests</div>
           <label class="dt-toggle"><input type="checkbox" id="dt-mon-enabled"><div class="dt-toggle-track"><div class="dt-toggle-thumb"></div></div></label>

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — HTML
 // @namespace    http://tampermonkey.net/
-// @version      3.6.14
+// @version      3.6.16
 // @description  HTML template builders for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -37,6 +37,7 @@ const DT_ICON_PATHS = {
   trash:       '<polyline points="3 6 5 6 21 6"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
   activity:    '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
   checkSquare: '<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  folder:      '<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.3l2 2.2h8.7A1.5 1.5 0 0 1 21 8.7v9.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>',
   tree:        '<rect x="3" y="3" width="7" height="5" rx="1"/><rect x="14" y="9" width="7" height="5" rx="1"/><rect x="14" y="16" width="7" height="5" rx="1"/><path d="M6.5 8v6a2 2 0 0 0 2 2H14M6.5 11.5H14"/>',
 };
 function icon(name, size = 14, sw = 1.8) {
@@ -148,7 +149,7 @@ function buildNetworkPanel() {
         <div class="dt-row-label" style="display:flex;align-items:center;gap:5px">Auto-apply ${tip('Automatically apply a matching enabled preset to responses — no modal shown.')}</div>
         <label class="dt-toggle"><input type="checkbox" id="dt-res-auto-transform"><div class="dt-toggle-track"><div class="dt-toggle-thumb"></div></div></label>
       </div>
-      <div class="dt-at-hint" id="dt-res-auto-transform-hint" style="font-size:11px;color:var(--mu);margin-bottom:10px"></div>
+      <div class="dt-at-hint" id="dt-res-auto-transform-hint" style="font-size:calc(11px*var(--dt-fs,1));color:var(--mu);margin-bottom:10px"></div>
       <button class="dt-btn-presets" id="dt-res-presets-btn">
         <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="2"/><path d="M6.5 1v1.5M6.5 10.5V12M1 6.5h1.5M10.5 6.5H12M2.6 2.6l1.1 1.1M9.3 9.3l1.1 1.1M9.3 2.6l-1.1 1.1M3.7 9.3l-1.1 1.1"/></svg>
         Manage Presets
@@ -195,8 +196,41 @@ function buildSidebarSettingsPanel() {
     </div>
 
     <div class="dt-section">
+      <div class="dt-slabel">Interface ${tip('Applies to the whole sidebar, modals, menus and tooltips. The code editor has its own font and size below.')}</div>
+      <div class="dt-row" style="margin-bottom:6px"><div class="dt-row-label">UI Font Size</div></div>
+      <div class="dt-slider-row" style="margin-bottom:12px">
+        <button class="dt-slider-step" id="dt-ui-fs-dec">−</button>
+        <input type="range" class="dt-size-slider" id="dt-ui-fs-slider" min="80" max="150" step="5" style="flex:1">
+        <button class="dt-slider-step" id="dt-ui-fs-inc">+</button>
+        <input type="text" class="dt-slider-val-input" id="dt-ui-fs-val" value="100%">
+      </div>
+      <div class="dt-row" style="margin-bottom:10px">
+        <div class="dt-row-label">UI Font</div>
+        <div class="dt-side-toggle" id="dt-ui-font-toggle">
+          ${UI_FONTS.map(f => `<button class="dt-side-btn" data-uifont="${f.id}" title="${f.name}" style="font-family:${f.css}">${f.short}</button>`).join('')}
+        </div>
+      </div>
+      <div class="dt-row" style="margin-bottom:12px">
+        <div><div class="dt-row-label">Reduce Motion</div><div class="dt-row-sub">Disable slide/fade animations</div></div>
+        <label class="dt-toggle"><input type="checkbox" id="dt-ui-reduce-motion"><div class="dt-toggle-track"><div class="dt-toggle-thumb"></div></div></label>
+      </div>
+      <button class="dt-btn-reset" id="dt-ui-settings-reset" style="width:100%">Reset interface settings</button>
+    </div>
+
+    <div class="dt-section">
+      <div class="dt-slabel">Force Dark ${tip('Engine used by the sun/moon button in the header. Smart rewrites the page\'s colours and handles icons, SVGs and images one by one, so photos and logos keep their real colours. Filter inverts the whole page — use it on sites where Smart misses something (canvas apps, unreadable styles).')}</div>
+      <div class="dt-row" style="margin-bottom:0">
+        <div><div class="dt-row-label">Engine</div><div class="dt-row-sub">Applies to every site with Force Dark on</div></div>
+        <div class="dt-side-toggle" id="dt-fd-engine-toggle">
+          <button class="dt-side-btn" data-fdengine="smart">Smart</button>
+          <button class="dt-side-btn" data-fdengine="filter">Filter</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="dt-section">
       <div class="dt-slabel">Integrations ${tip('Used by the API Docs tab\'s "Push to Postman" action. Get a key from Postman → Settings → API Keys.')}</div>
-      <div class="dt-row-sub" style="margin-bottom:8px;color:var(--mu);font-size:11px">Postman API Key</div>
+      <div class="dt-row-sub" style="margin-bottom:8px;color:var(--mu);font-size:calc(11px*var(--dt-fs,1))">Postman API Key</div>
       <div class="dt-rec-secret-wrap">
         <input class="dt-baseurl-entry-url dt-rec-secret-input" id="dt-set-postman-key" type="text" placeholder="Postman API Key (optional)" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" data-lpignore="true" data-1p-ignore data-bwignore="true" data-form-type="other" style="width:100%;box-sizing:border-box;padding-right:32px">
         <button type="button" class="dt-rec-secret-toggle" id="dt-set-postman-key-toggle" title="Show/hide" tabindex="-1">
@@ -280,10 +314,10 @@ function buildSidebarSettingsPanel() {
     </div>
 
     <div class="dt-section">
-      <div class="dt-row" style="margin-bottom:6px"><div class="dt-row-label">Font Size</div></div>
+      <div class="dt-row" style="margin-bottom:6px"><div class="dt-row-label">Editor Font Size</div></div>
       <div class="dt-slider-row">
         <button class="dt-slider-step" id="dt-sb-size-dec">−</button>
-        <input type="range" class="dt-size-slider" id="dt-sb-size-slider" min="9" max="18" step="1" style="flex:1">
+        <input type="range" class="dt-size-slider" id="dt-sb-size-slider" min="8" max="24" step="1" style="flex:1">
         <button class="dt-slider-step" id="dt-sb-size-inc">+</button>
         <input type="text" class="dt-slider-val-input" id="dt-sb-size-val" value="12">
       </div>
@@ -295,7 +329,7 @@ function buildSidebarSettingsPanel() {
     </div>
 
     <div class="dt-section">
-      <div class="dt-row-sub" style="color:var(--mu);font-size:11px;margin-bottom:8px">Changes apply immediately.</div>
+      <div class="dt-row-sub" style="color:var(--mu);font-size:calc(11px*var(--dt-fs,1));margin-bottom:8px">Changes apply immediately.</div>
       <button class="dt-btn-reset" id="dt-sb-settings-reset" style="width:100%">Reset editor settings</button>
     </div>
   `;
@@ -395,6 +429,29 @@ const HTML = `
       </div>
       <div class="dt-modal-body" id="dt-req-body">
         <div class="dt-modal-inner">
+          <div id="dt-req-action-section" class="dt-action-section" style="display:none">
+            <div class="dt-action-head">
+              <span class="dt-action-badge">Next.js Server Action</span>
+              <span class="dt-action-id" id="dt-req-action-id"></span>
+              ${tip("The page talks to the FE server, which calls your backend. Aborting this request or answering with plain JSON crashes the page, because Next expects an RSC response. <b>Mock Result</b> answers with a valid one instead — the result your action would return when the backend fails, or a thrown error. <b>Hang</b> never answers, for testing loading states.")}
+            </div>
+            <div class="dt-row" style="margin:0">
+              <div class="dt-flabel" style="margin:0">Mock result</div>
+              <div class="dt-side-toggle" id="dt-req-action-mode">
+                <button class="dt-side-btn active" data-actmode="return" type="button">Return value</button>
+                <button class="dt-side-btn" data-actmode="throw" type="button">Throw error</button>
+              </div>
+            </div>
+            <div id="dt-req-action-return">
+              <textarea class="dt-mock-body-ed dt-action-value" id="dt-req-action-value" spellcheck="false" placeholder='{"success":false,"error":"Backend unavailable"}'></textarea>
+              <div class="dt-action-hint" id="dt-req-action-hint"></div>
+            </div>
+            <div id="dt-req-action-throw" style="display:none">
+              <input class="dt-baseurl-entry-url" id="dt-req-action-error" type="text" spellcheck="false" autocomplete="off" placeholder="Error message (shown in development builds)" style="width:100%;box-sizing:border-box">
+              <div class="dt-action-hint">The action rejects like a real server-side throw — handled by the page's try/catch or its error boundary. Production builds only expose a digest, not the message.</div>
+            </div>
+            <div class="dt-action-hint" id="dt-req-action-readonly" style="display:none">Payload is multipart form data (file/FormData arguments) — it's sent unchanged.</div>
+          </div>
           <div id="dt-req-editor-section" class="dt-payload-section">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
               <div class="dt-flabel" style="margin-bottom:0">Request Payload</div>
@@ -562,7 +619,7 @@ const HTML = `
         <div id="dt-presets-list-view" class="dt-modal-inner" style="gap:10px">
           <div class="dt-presets-list" id="dt-presets-list"></div>
           <div class="dt-presets-empty" id="dt-presets-empty" style="text-align:center;color:var(--mu);padding:32px 20px;display:none">No presets saved yet.</div>
-          <div class="dt-preset-load-hint" id="dt-preset-load-hint" style="display:none;font-size:11px;color:var(--mu);background:var(--am-bg);border:1px solid var(--am-bd);border-radius:6px;padding:8px 12px;line-height:1.5">
+          <div class="dt-preset-load-hint" id="dt-preset-load-hint" style="display:none;font-size:calc(11px*var(--dt-fs,1));color:var(--mu);background:var(--am-bg);border:1px solid var(--am-bd);border-radius:6px;padding:8px 12px;line-height:1.5">
             <strong style="color:var(--am)">Load</strong> puts the preset's JS code into the transform editor — it only takes effect once you're in the response intercept modal and click Run or Apply.
           </div>
         </div>
