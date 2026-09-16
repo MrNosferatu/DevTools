@@ -114,11 +114,25 @@ function buildNetworkPanel() {
         <div class="dt-disclosure-body">
           <div class="dt-note dt-note-tight" style="margin-top:0">The intercept modal's <em>Mock Fail</em> button answers the request with this response instead of sending it — the script acts as the server for that request. The body can be overridden per group or per URL in the Environments tab.</div>
           <div class="dt-row" style="margin:12px 0 10px">
+            <div class="dt-flabel" style="margin:0">Mode</div>
+            <div class="dt-side-toggle" id="dt-req-fail-mode">
+              <button class="dt-side-btn active" data-failmode="hard" type="button" title="Answer with the configured status code (e.g. 500)">Hard</button>
+              <button class="dt-side-btn" data-failmode="soft" type="button" title="Answer 200 OK carrying the same body — for testing success-shaped error payloads">Soft</button>
+            </div>
+          </div>
+          <div class="dt-row" id="dt-req-mock-status-row" style="margin:0 0 10px">
             <div class="dt-row-label">Status code</div>
             <input class="dt-mock-status-input" id="dt-req-mock-status" type="text" inputmode="numeric" maxlength="3" spellcheck="false">
           </div>
-          <div class="dt-flabel" style="margin-bottom:5px">Default response body</div>
+          <div class="dt-row" style="margin:0 0 10px">
+            <div class="dt-row-label">Code ${tip('Substituted for {{code}} in the body below.')}</div>
+            <input class="dt-mock-status-input" id="dt-req-mock-code" type="text" spellcheck="false" autocomplete="off" style="width:120px;text-align:left">
+          </div>
+          <div class="dt-flabel" style="margin-bottom:5px">Message ${tip('Substituted for {{message}} in the body below.')}</div>
+          <input class="dt-mock-body-ed" id="dt-req-mock-message" type="text" spellcheck="false" autocomplete="off" placeholder="Something went wrong" style="min-height:0;margin-bottom:10px">
+          <div class="dt-flabel" style="margin-bottom:5px">Default response body ${tip('Use {{code}} and {{message}} as placeholders — they are filled in when the mock is served.')}</div>
           <textarea class="dt-mock-body-ed" id="dt-req-mock-body" spellcheck="false" placeholder='{"success":false,"error":"Request failed (mocked by DevTools)"}'></textarea>
+          <div id="dt-req-mock-history"></div>
         </div>
       </div>
     </div>
