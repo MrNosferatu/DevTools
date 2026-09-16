@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.18
+// @version      3.6.19
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -1461,7 +1461,7 @@
     // shape can change what matches). Debounced lightly so typing stays smooth.
     let _reqSugT, _resSugT;
     $('dt-req-ed').addEventListener('input', () => { clearTimeout(_reqSugT); _reqSugT=setTimeout(()=>renderEditSuggestions('req'), 250); });
-    $('dt-res-ed').addEventListener('input', () => { clearTimeout(_resSugT); _resSugT=setTimeout(()=>renderEditSuggestions('res'), 250); });
+    $('dt-res-ed').addEventListener('input', () => { clearTimeout(_resSugT); _resSugT=setTimeout(()=>{renderEditSuggestions('res');autoSizeResEditor();}, 250); });
     bindEditor('dt-req-ed','reqSearch');
     bindEditor('dt-res-ed','resSearch');
     $('dt-req-modal').addEventListener('keydown', e => { if((e.ctrlKey||e.metaKey)&&e.key==='f'){e.preventDefault();openSearch('dt-req-ed');} });
@@ -1531,6 +1531,19 @@
     $('dt-presets-close').addEventListener('click', () => { closePresetsModal(); });
     $('dt-res-save-preset').addEventListener('click', () => { savePresetDialog(); });
     $('dt-presets-overlay').addEventListener('click', e => { if(e.target.id==='dt-presets-overlay') closePresetsModal(); });
+    // Mock Fail picker (secondary modal)
+    $('dt-mockpick-close').addEventListener('click', () => closeMockPicker());
+    $('dt-mockpick-overlay').addEventListener('click', e => { if(e.target.id==='dt-mockpick-overlay') closeMockPicker(); });
+    $('dt-mockpick-delsel').addEventListener('click', () => {
+      if (!_mockPick) return;
+      const { req, selected } = _mockPick;
+      collectMockCandidates(req.url, req.method).forEach(c => {
+        const rid = c.ref.kind + ':' + (c.ref.id || c.ref.ts || c.ref.groupId || '');
+        if (selected.has(rid)) deleteMockCandidate(req.url, req.method, c.ref);
+      });
+      selected.clear();
+      renderMockPicker();
+    });
     // Preset editor sub-view (rename / edit URL patterns of an existing preset)
     $('dt-pe-cancel').addEventListener('click', () => closePresetEditor());
     $('dt-pe-save').addEventListener('click', () => commitPresetEditor());
@@ -1891,6 +1904,29 @@
     cm.setOption('extraKeys', { 'Ctrl-F': () => openSearch(id), 'Cmd-F': () => openSearch(id) });
   }
   function refreshCM(id) { const cm = cmEditors[id]; if (cm) requestAnimationFrame(() => { try { cm.refresh(); } catch {} }); }
+  // Grow the response body editor to fit its content (with a floor and a
+  // viewport-relative cap, beyond which it scrolls) instead of the fixed small
+  // box that needed manual resizing. Only the response manual editor — its
+  // section doesn't flex-fill the modal the way the request editor does.
+  function autoSizeResEditor() {
+    const wrap = $('dt-res-ed-wrap'), ta = $('dt-res-ed'), cm = cmEditors['dt-res-ed'];
+    let vh = 600; try { vh = (dtRoot && dtRoot.ownerDocument.defaultView || window).innerHeight || 600; } catch {}
+    const maxH = Math.max(220, Math.round(vh * 0.55)), minH = 160;
+    requestAnimationFrame(() => {
+      try {
+        if (cm) {
+          const lineH = cm.defaultTextHeight() || 18;
+          const h = Math.min(maxH, Math.max(minH, cm.lineCount() * lineH + 26));
+          if (wrap) { wrap.style.flex = 'none'; wrap.style.height = h + 'px'; }
+          cm.setSize(null, h); cm.refresh();
+        } else if (ta) {
+          if (wrap) { wrap.style.flex = 'none'; wrap.style.height = 'auto'; }
+          ta.style.height = 'auto';
+          ta.style.height = Math.min(maxH, Math.max(minH, ta.scrollHeight + 8)) + 'px';
+        }
+      } catch {}
+    });
+  }
   function cmFoldAll(id, fold) {
     const cm = cmEditors[id], CM = getCM();
     if (!cm || !CM) return;
@@ -2572,7 +2608,7 @@
       // Abort now answers with a generic mock failure (500 "Request aborted")
       // through the same path as Mock Fail — one code path, two entry points.
       // Actions still "Hang" (a fabricated response would crash the page).
-      () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);if(isAction)req.resolve({hang:true});else req.resolve({mock:resolveMockFailure(req.url,{generic:true})});showNextModal(); }
+      () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);if(isAction)req.resolve({hang:true});else req.resolve({mock:resolveMockFailure()});showNextModal(); }
     );
     const abortBtnEl = $('dt-req-abort');
     abortBtnEl.textContent = isAction ? 'Hang' : 'Abort';
@@ -2603,15 +2639,8 @@
         newMockFail.disabled = true;
         newMockFail.title = "Mock Fail is disabled for framework/navigation requests — a fabricated failure would crash the page. Edit and Send instead.";
       } else {
-        const mock = resolveMockFailure(req.url);
-        newMockFail.title = `Don't send — answer with a mocked ${mock.status} ${mock.statusText} response`;
-        newMockFail.addEventListener('click', () => {
-          ov.classList.remove('visible');
-          removeFromQueue('pendingReqs', req);
-          recordMockHistory(req.method, req.url, mock);
-          req.resolve({ mock });
-          showNextModal();
-        });
+        newMockFail.title = "Don't send — pick a mocked failure response to answer with";
+        newMockFail.addEventListener('click', () => openMockPicker(req, ov));
       }
     }
     // Skip — pass original through unmodified
@@ -2677,6 +2706,7 @@
     $('dt-res-wrap-key').style.display='none';
     let body=res.body||'';try{body=JSON.stringify(JSON.parse(body),null,2);}catch{}
     $('dt-res-ed').value=body;updateBadge('dt-res-ed');renderHL('dt-res-ed','resSearch','');refreshCM('dt-res-ed');
+    autoSizeResEditor();
     renderEditSuggestions('res');
     populateHeaders('dt-res-hinner','dt-res-hcount',res.headers,'dt-res-hrevert');
     // Body revert
@@ -3328,8 +3358,8 @@
       .replace(/\{\{code\}\}/g, code == null ? '' : String(code))
       .replace(/\{\{message\}\}/g, message == null ? '' : String(message));
   }
-  // Find the Base URL (group, entry) whose host matches this URL, if any —
-  // the source of any per-group / per-URL Mock Fail overrides.
+  // Find the enabled Base URL group whose host matches this URL, if any — the
+  // source of the group-level Mock Fail default (see collectMockCandidates).
   function matchMockOverride(url) {
     try {
       const host = new URL(url, location.href).host;
@@ -3344,56 +3374,14 @@
     } catch {}
     return { group: null, entry: null };
   }
-  // Resolve the Mock Fail config (raw body + code/message/mode) for a URL,
-  // most specific first: matching Base URL entry → its group → the global
-  // default from the Network panel. Each field resolves independently, so a
-  // group can override just the mode while inheriting the global body, etc.
-  // An empty override value means "inherit" (same convention as mockBody).
-  function resolveMockConfig(url) {
-    const { group, entry } = matchMockOverride(url);
-    const pick = (field, glob) => {
-      const ev = entry && entry[field] != null ? String(entry[field]).trim() : '';
-      if (ev) return ev;
-      const gv = group && group[field] != null ? String(group[field]).trim() : '';
-      if (gv) return gv;
-      return glob;
-    };
-    const body = pick('mockBody', (state.req.mockBody || '').trim()) || MOCK_FAIL_FALLBACK_BODY;
-    const code = pick('mockCode', state.req.mockCode || '');
-    const message = pick('mockMessage', state.req.mockMessage || '');
-    const mode = pick('mockFailMode', state.req.mockFailMode === 'soft' ? 'soft' : 'hard') === 'soft' ? 'soft' : 'hard';
-    return { body, code, message, mode };
-  }
-  // Build the mock served by the request modal. Returns the injected `body`
-  // (placeholders resolved) plus the raw fields history records/dedupes on:
-  // `rawBody`, `editStatus` (the user's status field), `mode`, `code`,
-  // `message`. `generic:true` produces the fixed Abort mock, ignoring the
-  // custom code/message/body — one path, two entry points (Mock Fail / Abort).
-  function resolveMockFailure(url, opts = {}) {
-    if (opts.generic) {
-      const code = '', message = 'Request aborted';
-      return {
-        status: 500, editStatus: 500, statusText: MOCK_STATUS_TEXT[500] || 'Error',
-        mode: 'hard', code, message, rawBody: MOCK_ABORT_BODY,
-        body: applyMockTemplate(MOCK_ABORT_BODY, { code, message }),
-        headers: { 'content-type': 'application/json' },
-      };
-    }
-    // Code/message/mode/body may be overridden per group or per URL in the
-    // Environments tab (entry → group → global); see resolveMockConfig.
-    const cfg = resolveMockConfig(url);
-    const mode = cfg.mode;
-    const editStatus = mockFailStatus();
-    // soft → force a 200 OK (ok:true) carrying the same body; hard → the
-    // configured status. The status field is ignored/greyed in soft mode.
-    const status = mode === 'soft' ? 200 : editStatus;
-    const code = cfg.code;
-    const message = cfg.message;
-    const rawBody = cfg.body;
+  // The fixed generic mock served when the request modal's Abort answers a
+  // request (a 500 "Request aborted") — never the user's custom fields.
+  function resolveMockFailure() {
+    const code = '', message = 'Request aborted';
     return {
-      status, editStatus, statusText: MOCK_STATUS_TEXT[status] || (mode === 'soft' ? 'OK' : 'Error'),
-      mode, code, message, rawBody,
-      body: applyMockTemplate(rawBody, { code, message }),
+      status: 500, editStatus: 500, statusText: MOCK_STATUS_TEXT[500] || 'Error',
+      mode: 'hard', code, message, rawBody: MOCK_ABORT_BODY,
+      body: applyMockTemplate(MOCK_ABORT_BODY, { code, message }),
       headers: { 'content-type': 'application/json' },
     };
   }
@@ -3419,6 +3407,189 @@
     state.req.mockHistory[key] = list;
     Store.setSoon('req.mockHistory', state.req.mockHistory);
     syncNetworkPanel();
+  }
+
+  // ─── Mock Fail picker (secondary modal) ─────────────────────────────────────
+  // Clicking "Mock Fail" in the request modal opens a picker listing every
+  // candidate failure for the endpoint, in priority order:
+  //   Per-URL (API Docs endpoint mocks — or History when the URL isn't
+  //   documented) → Group default → Generic global.
+  // Clicking a row simulates that failure; rows can be edited (except History,
+  // which is read-only) and deleted, individually or in bulk.
+  const recorderPluginRef = () => plugins.find(p => p.id === 'recorder');
+  // Turn a plain {status,code,message,body,mode} field set into the served mock.
+  function buildMock(f) {
+    const mode = f.mode === 'soft' ? 'soft' : 'hard';
+    const n = parseInt(f.status, 10);
+    const editStatus = (n >= 200 && n <= 599) ? n : 500;
+    const status = mode === 'soft' ? 200 : editStatus;
+    const code = f.code || '', message = f.message || '';
+    const rawBody = (f.body || '').trim() || MOCK_FAIL_FALLBACK_BODY;
+    return {
+      status, editStatus, statusText: MOCK_STATUS_TEXT[status] || (mode === 'soft' ? 'OK' : 'Error'),
+      mode, code, message, rawBody,
+      body: applyMockTemplate(rawBody, { code, message }),
+      headers: { 'content-type': 'application/json' },
+    };
+  }
+  function globalMockFields() {
+    return { status: mockFailStatus(), code: state.req.mockCode || '', message: state.req.mockMessage || '', body: (state.req.mockBody || '').trim(), mode: state.req.mockFailMode === 'soft' ? 'soft' : 'hard' };
+  }
+  // over[k] wins when non-empty, else fall back to base[k] — so a group that
+  // only sets a message inherits the rest of the generic default.
+  function mergeFields(base, over) {
+    const pick = (k) => { const v = over[k]; return (v != null && String(v).trim() !== '') ? v : base[k]; };
+    return { status: pick('status'), code: pick('code'), message: pick('message'), body: pick('body'), mode: pick('mode') };
+  }
+  function collectMockCandidates(url, method) {
+    const out = [];
+    const rec = recorderPluginRef();
+    const glob = globalMockFields();
+    // 1. Per-URL (API Docs) mocks, else History fallback when undocumented.
+    let epMocks = [], documented = false;
+    if (rec && rec.getEndpointMocks) {
+      epMocks = rec.getEndpointMocks(url, method) || [];
+      documented = rec.isEndpointDocumented ? rec.isEndpointDocumented(url, method) : false;
+    }
+    if (epMocks.length) {
+      epMocks.forEach(m => out.push({ source: 'endpoint', label: 'Per-URL', editable: true, fields: { status: m.status, code: m.code, message: m.message, body: m.body, mode: m.mode }, ref: { kind: 'endpoint', id: m.id } }));
+    } else if (!documented) {
+      (state.req.mockHistory[mockEndpointKey(method, url)] || []).forEach(h =>
+        out.push({ source: 'history', label: 'History', editable: false, fields: { status: h.status, code: h.code, message: h.message, body: h.body, mode: h.mode }, ref: { kind: 'history', ts: h.ts } }));
+    }
+    // 2. Group default.
+    const { group } = matchMockOverride(url);
+    if (group && (group.mockBody || group.mockCode || group.mockMessage || group.mockFailMode || group.mockStatus)) {
+      out.push({ source: 'group', label: 'Group', editable: true, fields: mergeFields(glob, { status: group.mockStatus, code: group.mockCode, message: group.mockMessage, body: (group.mockBody || '').trim(), mode: group.mockFailMode }), ref: { kind: 'group', groupId: group.id } });
+    }
+    // 3. Generic global.
+    out.push({ source: 'global', label: 'Generic', editable: true, fields: glob, ref: { kind: 'global' } });
+    return out;
+  }
+  function deleteMockCandidate(url, method, ref) {
+    const rec = recorderPluginRef();
+    if (ref.kind === 'endpoint') { if (rec && rec.deleteEndpointMock) rec.deleteEndpointMock(url, method, ref.id); }
+    else if (ref.kind === 'history') {
+      const k = mockEndpointKey(method, url);
+      state.req.mockHistory[k] = (state.req.mockHistory[k] || []).filter(h => h.ts !== ref.ts);
+      Store.setSoon('req.mockHistory', state.req.mockHistory);
+    } else if (ref.kind === 'group') {
+      const g = (state.baseUrl.groups || []).find(x => x.id === ref.groupId);
+      if (g) { g.mockBody = ''; g.mockCode = ''; g.mockMessage = ''; g.mockFailMode = ''; g.mockStatus = ''; Store.set('baseurl.groups', state.baseUrl.groups); }
+    } else if (ref.kind === 'global') {
+      state.req.mockCode = ''; state.req.mockMessage = ''; state.req.mockBody = ''; state.req.mockFailMode = 'hard';
+      Store.setSoon('req.mockCode', ''); Store.setSoon('req.mockMessage', ''); Store.setSoon('req.mockBody', ''); Store.setSoon('req.mockFailMode', 'hard');
+      syncNetworkPanel();
+    }
+  }
+  // Persist an edited field set back to its source (History is never editable).
+  function saveMockCandidate(url, method, ref, fields) {
+    const rec = recorderPluginRef();
+    if (ref.kind === 'endpoint') { if (rec && rec.updateEndpointMock) rec.updateEndpointMock(url, method, ref.id, fields); }
+    else if (ref.kind === 'group') {
+      const g = (state.baseUrl.groups || []).find(x => x.id === ref.groupId);
+      if (g) { g.mockStatus = fields.status; g.mockCode = fields.code; g.mockMessage = fields.message; g.mockBody = fields.body; g.mockFailMode = fields.mode; Store.set('baseurl.groups', state.baseUrl.groups); }
+    } else if (ref.kind === 'global') {
+      state.req.mockStatus = (() => { const n = parseInt(fields.status, 10); return (n >= 200 && n <= 599) ? n : 500; })();
+      state.req.mockCode = fields.code; state.req.mockMessage = fields.message; state.req.mockBody = fields.body; state.req.mockFailMode = fields.mode === 'soft' ? 'soft' : 'hard';
+      ['mockStatus', 'mockCode', 'mockMessage', 'mockBody', 'mockFailMode'].forEach(k => Store.setSoon('req.' + k, state.req[k]));
+      syncNetworkPanel();
+    }
+  }
+
+  let _mockPick = null; // { req, overlay } while the picker is open
+  function openMockPicker(req, reqOverlay) {
+    _mockPick = { req, overlay: reqOverlay, selected: new Set() };
+    const ov = $('dt-mockpick-overlay');
+    const epLabel = $('dt-mockpick-endpoint');
+    if (epLabel) epLabel.textContent = `${req.method} ${(() => { try { return new URL(req.url, location.href).pathname; } catch { return req.url; } })()}`;
+    renderMockPicker();
+    ov.classList.add('visible');
+  }
+  function closeMockPicker() { const ov = $('dt-mockpick-overlay'); if (ov) ov.classList.remove('visible'); _mockPick = null; }
+  function applyMockCandidate(fields) {
+    if (!_mockPick) return;
+    const { req, overlay } = _mockPick;
+    const mock = buildMock(fields);
+    closeMockPicker();
+    if (overlay) overlay.classList.remove('visible');
+    removeFromQueue('pendingReqs', req);
+    recordMockHistory(req.method, req.url, mock);
+    req.resolve({ mock });
+    showNextModal();
+  }
+  function renderMockPicker() {
+    if (!_mockPick) return;
+    const { req, selected } = _mockPick;
+    const list = $('dt-mockpick-list');
+    if (!list) return;
+    const cands = collectMockCandidates(req.url, req.method);
+    list.innerHTML = '';
+    cands.forEach((c, i) => {
+      const f = c.fields;
+      const badge = f.mode === 'soft' ? '200·soft' : String((() => { const n = parseInt(f.status, 10); return (n >= 200 && n <= 599) ? n : 500; })());
+      const desc = [f.code, f.message || (f.body || '').replace(/\s+/g, ' ').trim()].filter(Boolean).join(' · ').slice(0, 52) || '(default body)';
+      const rid = c.ref.kind + ':' + (c.ref.id || c.ref.ts || c.ref.groupId || '');
+      const row = document.createElement('div');
+      row.className = 'dt-mockpick-row';
+      row.innerHTML = `
+        <input type="checkbox" class="dt-mockpick-check" ${selected.has(rid) ? 'checked' : ''}>
+        <button class="dt-mockpick-apply" type="button" title="Simulate this failure">
+          <span class="dt-mockpick-tag dt-mockpick-tag-${c.source}">${escHtml(c.label)}</span>
+          <span class="dt-mockpick-badge">${escHtml(badge)}</span>
+          <span class="dt-mockpick-desc">${escHtml(desc)}</span>
+        </button>
+        ${c.editable ? `<button class="dt-mockpick-edit" type="button" title="Edit">${icon('tool', 12, 1.9)}</button>` : ''}
+        <button class="dt-mockpick-del" type="button" title="Delete">${icon('trash', 12, 1.9)}</button>`;
+      row.querySelector('.dt-mockpick-apply').addEventListener('click', () => applyMockCandidate(c.fields));
+      row.querySelector('.dt-mockpick-del').addEventListener('click', () => { deleteMockCandidate(req.url, req.method, c.ref); selected.delete(rid); renderMockPicker(); });
+      const editBtn = row.querySelector('.dt-mockpick-edit');
+      if (editBtn) editBtn.addEventListener('click', () => openMockPickEditor(row, c));
+      row.querySelector('.dt-mockpick-check').addEventListener('change', e => { if (e.target.checked) selected.add(rid); else selected.delete(rid); updateMockPickBulk(cands); });
+      list.appendChild(row);
+    });
+    if (!cands.length) { const e = document.createElement('div'); e.className = 'dt-rec-mock-empty'; e.textContent = 'No mocks configured.'; list.appendChild(e); }
+    updateMockPickBulk(cands);
+  }
+  function updateMockPickBulk(cands) {
+    const btn = $('dt-mockpick-delsel');
+    if (btn) btn.disabled = !_mockPick || _mockPick.selected.size === 0;
+  }
+  // Inline editor row for an editable candidate (endpoint / group / global).
+  function openMockPickEditor(row, c) {
+    if (!_mockPick) return;
+    const { req } = _mockPick;
+    const f = c.fields;
+    const form = document.createElement('div');
+    form.className = 'dt-rec-mock-form';
+    form.innerHTML = `
+      <div class="dt-rec-mock-form-row">
+        <div class="dt-side-toggle dt-mp-mode">
+          <button class="dt-side-btn${f.mode==='soft'?'':' active'}" data-failmode="hard" type="button">Hard</button>
+          <button class="dt-side-btn${f.mode==='soft'?' active':''}" data-failmode="soft" type="button">Soft</button>
+        </div>
+        <input class="dt-mock-status-input dt-mp-status" type="text" inputmode="numeric" maxlength="3" spellcheck="false" placeholder="500">
+      </div>
+      <input class="dt-baseurl-entry-url dt-mp-code" placeholder="code — fills {{code}}" spellcheck="false" autocomplete="off">
+      <input class="dt-baseurl-entry-url dt-mp-msg" placeholder="message — fills {{message}}" spellcheck="false" autocomplete="off">
+      <textarea class="dt-baseurl-mock-input dt-mp-body" placeholder='{"success":false,"error":"{{message}}"}' spellcheck="false"></textarea>
+      <div class="dt-rec-mock-form-actions">
+        <button class="dt-rec-mini-btn dt-mp-save" type="button">Save</button>
+        <button class="dt-rec-mini-btn dt-mp-cancel" type="button">Cancel</button>
+      </div>`;
+    form.querySelector('.dt-mp-status').value = f.status;
+    form.querySelector('.dt-mp-code').value = f.code || '';
+    form.querySelector('.dt-mp-msg').value = f.message || '';
+    form.querySelector('.dt-mp-body').value = f.body || '';
+    let mode = f.mode === 'soft' ? 'soft' : 'hard';
+    form.querySelectorAll('.dt-mp-mode .dt-side-btn').forEach(b => b.addEventListener('click', () => { mode = b.dataset.failmode; form.querySelectorAll('.dt-mp-mode .dt-side-btn').forEach(x => x.classList.toggle('active', x === b)); }));
+    form.querySelector('.dt-mp-cancel').addEventListener('click', () => renderMockPicker());
+    form.querySelector('.dt-mp-save').addEventListener('click', () => {
+      const fields = { status: form.querySelector('.dt-mp-status').value, code: form.querySelector('.dt-mp-code').value, message: form.querySelector('.dt-mp-msg').value, body: form.querySelector('.dt-mp-body').value, mode };
+      saveMockCandidate(req.url, req.method, c.ref, fields);
+      renderMockPicker();
+    });
+    row.replaceWith(form);
   }
   // A mock body that isn't valid JSON reads back as `null` for any consumer
   // using JSON parsing (fetch .json(), XHR responseType:'json', axios's default

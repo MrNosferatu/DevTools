@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — API Recorder Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.18
+// @version      3.6.19
 // @description  API Recorder plugin for DevTools Sidebar — passively documents endpoint shapes and exports/pushes them as a Postman collection.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -409,6 +409,55 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     return ep;
   }
 
+  // ── Per-URL Mock Fail configs (endpoint-scoped) ─────────────────────────────
+  // Scope id for a host: the Base URL group it belongs to (so a mock set while
+  // looking at staging docs also answers prod, matching findDocumentedEndpoint),
+  // else the bare host. Mirrors the grouping getDisplayBuckets/merge use.
+  function scopeIdForHost(host) {
+    const direct = state.recorder.data['host:' + host];
+    let groupId = direct ? direct.groupId : null;
+    if (groupId == null) {
+      const g = state.baseUrl.groups.find(gr => getGroupHosts(gr).has(host));
+      if (g) groupId = g.id;
+    }
+    return groupId != null ? 'group:' + groupId : 'host:' + host;
+  }
+  const endpointMockKey = (scopeId, ek) => scopeId + '|' + ek;
+  function mockKeyForUrl(url, method) {
+    let u; try { u = new URL(url, location.href); } catch { return null; }
+    return endpointMockKey(scopeIdForHost(u.host), (method || 'GET').toUpperCase() + ' ' + normalizePath(u.pathname));
+  }
+  function getMocksByKey(key) { return (key && state.recorder.endpointMocks[key]) || []; }
+  function setMocksByKey(key, arr) {
+    if (!key) return;
+    if (arr && arr.length) state.recorder.endpointMocks[key] = arr;
+    else delete state.recorder.endpointMocks[key];
+    Store.set('rec.endpointMocks', state.recorder.endpointMocks);
+    renderRecorderList();
+  }
+  // Normalize a raw mock config: clamp status, coerce mode, keep a stable id.
+  function normMock(m) {
+    const n = parseInt(m.status, 10);
+    return {
+      id: m.id || (Date.now() + '-' + Math.random().toString(36).slice(2, 7)),
+      status: (n >= 200 && n <= 599) ? n : 500,
+      code: m.code == null ? '' : String(m.code),
+      message: m.message == null ? '' : String(m.message),
+      body: m.body == null ? '' : String(m.body),
+      mode: m.mode === 'soft' ? 'soft' : 'hard',
+    };
+  }
+  function addMockByKey(key, mock) { const arr = getMocksByKey(key).slice(); arr.push(normMock(mock)); setMocksByKey(key, arr); }
+  function updateMockByKey(key, id, mock) { const arr = getMocksByKey(key).map(m => m.id === id ? normMock({ ...mock, id }) : m); setMocksByKey(key, arr); }
+  function deleteMockByKey(key, id) { setMocksByKey(key, getMocksByKey(key).filter(m => m.id !== id)); }
+
+  // Public (url-based) surface used by the core request interceptor.
+  function getEndpointMocks(url, method) { return getMocksByKey(mockKeyForUrl(url, method)).slice(); }
+  function isEndpointDocumented(url, method) { return !!findDocumentedEndpoint(url, method); }
+  function addEndpointMock(url, method, mock) { addMockByKey(mockKeyForUrl(url, method), mock); }
+  function updateEndpointMock(url, method, id, mock) { updateMockByKey(mockKeyForUrl(url, method), id, mock); }
+  function deleteEndpointMock(url, method, id) { deleteMockByKey(mockKeyForUrl(url, method), id); }
+
   // Recursively turns a schema (type names / nested shape) into a real,
   // editable JSON value — used to pre-fill a documented field the user just
   // clicked "add" on, so they land on something sensible to start typing over.
@@ -468,13 +517,13 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
   function getDisplayBuckets() {
     const raw = state.recorder.data, out = {};
     if (!state.recorder.mergeByBaseUrl) {
-      Object.entries(raw).forEach(([key, b]) => { out[key] = { key, label: liveBucketLabel(b, true), endpoints: b.endpoints }; });
+      Object.entries(raw).forEach(([key, b]) => { out[key] = { key, groupId: b.groupId, label: liveBucketLabel(b, true), endpoints: b.endpoints }; });
       return Object.values(out);
     }
     Object.entries(raw).forEach(([key, b]) => {
       const mkey = b.groupId ? `group:${b.groupId}` : key;
       if (!out[mkey]) {
-        out[mkey] = { key: mkey, label: liveBucketLabel(b, false), endpoints: {} };
+        out[mkey] = { key: mkey, groupId: b.groupId, label: liveBucketLabel(b, false), endpoints: {} };
       }
       Object.entries(b.endpoints).forEach(([ek, ep]) => {
         out[mkey].endpoints[ek] = out[mkey].endpoints[ek] ? mergeEndpoint(out[mkey].endpoints[ek], ep) : cloneEndpoint(ep);
@@ -1047,7 +1096,7 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     `;
     const head = row.querySelector('.dt-rec-endpoint-head');
     const body = row.querySelector('.dt-rec-endpoint-body');
-    const renderBody = () => { if (!body._rendered) { renderEndpointDetail(body, ep); body._rendered = true; } };
+    const renderBody = () => { if (!body._rendered) { renderEndpointDetail(body, ep, bucket); body._rendered = true; } };
     if (openEndpoints.has(key)) { row.classList.add('open'); renderBody(); }
     head.addEventListener('click', () => {
       const open = row.classList.toggle('open');
@@ -1087,13 +1136,20 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     return walk(schema, 0);
   }
 
-  function renderEndpointDetail(container, ep) {
+  function renderEndpointDetail(container, ep, bucket) {
     const statusList = Object.entries(ep.responseStatuses).map(([s,c]) => `${s} ×${c}`).join(', ') || '—';
+    const scope = bucket && (bucket.groupId ? 'group:' + bucket.groupId : bucket.key);
+    const key = scope && endpointMockKey(scope, ep.method + ' ' + ep.path);
+    const mocks = getMocksByKey(key);
+    // Documented expected failures = the endpoint's own configured mocks (never
+    // the generic global/group defaults). Summarize their status · code.
+    const expected = mocks.map(m => m.code ? `${m.status} (${m.code})` : String(m.status)).join(', ');
     let html = '';
     if (ep.query && Object.keys(ep.query).length) html += schemaBlock('Query Params', formatTypeMap(ep.query));
     if (ep.headers && Object.keys(ep.headers).length) html += schemaBlock('Headers', formatTypeMap(ep.headers));
     if (ep.requestBodySchema !== undefined) html += schemaBlock('Request Body Schema', formatSchemaJSON(ep.requestBodySchema));
-    html += `<div class="dt-rec-schema-block"><div class="dt-rec-schema-label">Response</div><div class="dt-rec-status-line">Status seen: ${escHtml(statusList)}</div>${ep.responseBodySchema!==undefined ? `<div class="dt-rec-schema-pre">${formatSchemaJSON(ep.responseBodySchema)}</div>` : ''}</div>`;
+    html += `<div class="dt-rec-schema-block"><div class="dt-rec-schema-label">Response</div><div class="dt-rec-status-line">Status seen: ${escHtml(statusList)}</div>${expected ? `<div class="dt-rec-status-line">Expected failures: ${escHtml(expected)}</div>` : ''}${ep.responseBodySchema!==undefined ? `<div class="dt-rec-schema-pre">${formatSchemaJSON(ep.responseBodySchema)}</div>` : ''}</div>`;
+    html += `<div class="dt-rec-schema-block dt-rec-mock-block"><div class="dt-rec-schema-label">Mock failures ${scope ? '' : '(unavailable)'}</div><div class="dt-rec-mock-list"></div>${scope ? `<button class="dt-rec-mini-btn dt-rec-mock-add" type="button">+ Add mock</button>` : ''}</div>`;
     html += `<div class="dt-rec-endpoint-actions"><button class="dt-bench-copy-btn dt-rec-copy-curl">Copy as cURL</button></div>`;
     container.innerHTML = html;
     container.querySelector('.dt-rec-copy-curl').addEventListener('click', e => {
@@ -1103,6 +1159,85 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
         btn.textContent = 'Copied! ✓'; setTimeout(() => btn.textContent = orig, 1800);
       });
     });
+    if (scope) renderEndpointMockList(container, key, ep, bucket);
+  }
+
+  // The list of per-URL Mock Fail configs shown inside an endpoint's detail.
+  // Rows are editable/deletable; "+ Add mock" and a row's Edit open an inline
+  // form. Re-renders the whole endpoint detail on save so the Expected-failures
+  // line stays in sync.
+  function renderEndpointMockList(container, key, ep, bucket) {
+    const listEl = container.querySelector('.dt-rec-mock-list');
+    const mocks = getMocksByKey(key);
+    listEl.innerHTML = '';
+    if (!mocks.length) {
+      const empty = document.createElement('div');
+      empty.className = 'dt-rec-mock-empty';
+      empty.textContent = 'No per-URL mocks yet.';
+      listEl.appendChild(empty);
+    }
+    mocks.forEach(m => {
+      const row = document.createElement('div');
+      row.className = 'dt-rec-mock-row';
+      const summary = `${m.mode === 'soft' ? '200·soft' : m.status}${m.code ? ' · ' + m.code : ''}${m.message ? ' · ' + m.message : ''}`;
+      row.innerHTML = `
+        <span class="dt-rec-mock-summary">${escHtml(summary)}</span>
+        <button class="dt-rec-mock-edit" type="button" title="Edit">${icon('tool', 12, 1.9)}</button>
+        <button class="dt-rec-mock-del" type="button" title="Delete">${icon('trash', 12, 1.9)}</button>`;
+      row.querySelector('.dt-rec-mock-edit').addEventListener('click', () => openEndpointMockForm(container, key, ep, bucket, m));
+      row.querySelector('.dt-rec-mock-del').addEventListener('click', () => { deleteMockByKey(key, m.id); renderEndpointDetail(container, ep, bucket); });
+      listEl.appendChild(row);
+    });
+    const addBtn = container.querySelector('.dt-rec-mock-add');
+    if (addBtn) addBtn.onclick = () => openEndpointMockForm(container, key, ep, bucket, null);
+  }
+
+  // Inline add/edit form for a per-URL mock. `existing` null = add.
+  function openEndpointMockForm(container, key, ep, bucket, existing) {
+    const listEl = container.querySelector('.dt-rec-mock-list');
+    const m = existing || { status: 500, code: '', message: '', body: '', mode: 'hard' };
+    const form = document.createElement('div');
+    form.className = 'dt-rec-mock-form';
+    form.innerHTML = `
+      <div class="dt-rec-mock-form-row">
+        <div class="dt-side-toggle dt-rec-mock-mode">
+          <button class="dt-side-btn${m.mode==='soft'?'':' active'}" data-failmode="hard" type="button">Hard</button>
+          <button class="dt-side-btn${m.mode==='soft'?' active':''}" data-failmode="soft" type="button">Soft</button>
+        </div>
+        <input class="dt-mock-status-input dt-rec-mock-status" type="text" inputmode="numeric" maxlength="3" spellcheck="false" placeholder="500">
+      </div>
+      <input class="dt-baseurl-entry-url dt-rec-mock-code" placeholder="code — fills {{code}}" spellcheck="false" autocomplete="off">
+      <input class="dt-baseurl-entry-url dt-rec-mock-msg" placeholder="message — fills {{message}}" spellcheck="false" autocomplete="off">
+      <textarea class="dt-baseurl-mock-input dt-rec-mock-body" placeholder='{"success":false,"error":"{{message}}"}' spellcheck="false"></textarea>
+      <div class="dt-rec-mock-form-actions">
+        <button class="dt-rec-mini-btn dt-rec-mock-save" type="button">Save</button>
+        <button class="dt-rec-mini-btn dt-rec-mock-cancel" type="button">Cancel</button>
+      </div>`;
+    form.querySelector('.dt-rec-mock-status').value = m.status;
+    form.querySelector('.dt-rec-mock-code').value = m.code || '';
+    form.querySelector('.dt-rec-mock-msg').value = m.message || '';
+    form.querySelector('.dt-rec-mock-body').value = m.body || '';
+    let mode = m.mode === 'soft' ? 'soft' : 'hard';
+    form.querySelectorAll('.dt-rec-mock-mode .dt-side-btn').forEach(b => b.addEventListener('click', () => {
+      mode = b.dataset.failmode;
+      form.querySelectorAll('.dt-rec-mock-mode .dt-side-btn').forEach(x => x.classList.toggle('active', x === b));
+    }));
+    form.querySelector('.dt-rec-mock-cancel').addEventListener('click', () => renderEndpointDetail(container, ep, bucket));
+    form.querySelector('.dt-rec-mock-save').addEventListener('click', () => {
+      const draft = {
+        status: form.querySelector('.dt-rec-mock-status').value,
+        code: form.querySelector('.dt-rec-mock-code').value,
+        message: form.querySelector('.dt-rec-mock-msg').value,
+        body: form.querySelector('.dt-rec-mock-body').value,
+        mode,
+      };
+      if (existing) updateMockByKey(key, existing.id, draft); else addMockByKey(key, draft);
+      renderEndpointDetail(container, ep, bucket);
+    });
+    listEl.innerHTML = '';
+    listEl.appendChild(form);
+    const addBtn = container.querySelector('.dt-rec-mock-add');
+    if (addBtn) addBtn.style.display = 'none';
   }
 
   // ── Init / bind ──────────────────────────────────────────────────────────────
@@ -1237,6 +1372,12 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
       organizeFolders: Store.get('rec.organizeFolders', true),
       targets:  Store.get('rec.targets', []),
       data:     Store.get('rec.data', {}),
+      // Per-URL Mock Fail configs, keyed by "<scope>|<METHOD path>" where scope
+      // is "group:<id>" (when the host belongs to a Base URL group) or
+      // "host:<host>". Each value is an array of { id, status, code, message,
+      // body, mode }. These are the highest-priority Mock Fail source and also
+      // document an endpoint's expected failure codes (see renderEndpointDetail).
+      endpointMocks: Store.get('rec.endpointMocks', {}),
       postmanApiKey: Store.get('rec.postmanApiKey', ''),
       postmanCollectionIds: Store.get('rec.postmanCollectionIds', {}),
       view:     Store.get('rec.view', 'list'),   // 'list' | 'tree'
@@ -1253,6 +1394,7 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     'rec.organizeFolders':  () => { state.recorder.organizeFolders = Store.get('rec.organizeFolders', true); const el = $('dt-rec-organize-folders'); if (el) el.checked = state.recorder.organizeFolders; },
     'rec.targets':   () => { state.recorder.targets = Store.get('rec.targets', []); renderRecorderTargets(); },
     'rec.data':      () => { state.recorder.data = Store.get('rec.data', {}); renderRecorderList(); },
+    'rec.endpointMocks': () => { state.recorder.endpointMocks = Store.get('rec.endpointMocks', {}); renderRecorderList(); },
     'rec.postmanApiKey': () => { state.recorder.postmanApiKey = Store.get('rec.postmanApiKey', ''); const el = $('dt-set-postman-key'); if (el) el.value = state.recorder.postmanApiKey; ctx.updatePostmanKeyWarning && ctx.updatePostmanKeyWarning(); },
     'rec.view':      () => { state.recorder.view = Store.get('rec.view', 'list'); renderRecorderList(); },
     'rec.sort':      () => { state.recorder.sort = Store.get('rec.sort', 'path'); renderRecorderList(); },
@@ -1276,6 +1418,12 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
     // Lets the request interceptor cross-check a pending request's payload
     // against whatever's already documented for that endpoint.
     getRequestSuggestions,
+    // Per-URL Mock Fail source (highest priority) for the request interceptor.
+    getEndpointMocks,
+    isEndpointDocumented,
+    addEndpointMock,
+    updateEndpointMock,
+    deleteEndpointMock,
     getDefaultState,
     storageSyncHandlers,
   };

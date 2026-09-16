@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.6.18
+// @version      3.6.19
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -789,9 +789,6 @@ const CSS = `
   .dt-baseurl-entry-mock:hover, .dt-baseurl-entry-mock.has-mock { border-color:var(--am-bd); color:var(--am); background:var(--am-bg); }
   .dt-baseurl-entry-mock-wrap { display:none; margin:0 0 2px 22px; }
   .dt-baseurl-entry-mock-wrap.open { display:block; }
-  .dt-baseurl-entry-mock-fields { display:flex; flex-wrap:wrap; gap:5px; margin-bottom:5px; }
-  .dt-baseurl-entry-mock-fields .dt-side-toggle { flex-shrink:0; }
-  .dt-baseurl-entry-mock-fields .dt-baseurl-entry-url { flex:1; min-width:120px; }
   .dt-baseurl-color-strip { display:flex; gap:5px; padding:2px 0; }
   .dt-baseurl-entry .dt-baseurl-color-strip { position:absolute; top:26px; left:0; z-index:20; background:var(--bg); border:1px solid var(--bd); border-radius:8px; padding:6px 8px; box-shadow:0 4px 16px rgba(0,0,0,.16); }
   .dt-baseurl-color-dot { width:16px; height:16px; border-radius:50%; cursor:pointer; border:2px solid transparent; transition:all .15s; flex-shrink:0; }
@@ -909,6 +906,34 @@ const CSS = `
   .dt-rec-schema-pre .t-opt { color:var(--am); font-weight:700; cursor:help; }
   .dt-rec-endpoint-actions { display:flex; gap:6px; margin-top:10px; }
   .dt-rec-status-line { font-size:calc(11px*var(--dt-fs,1)); color:var(--tx2); margin-bottom:6px; }
+  /* Per-URL Mock Fail list + inline editor inside an endpoint's detail */
+  .dt-rec-mock-list { display:flex; flex-direction:column; gap:4px; margin-bottom:6px; }
+  .dt-rec-mock-empty { font-size:calc(10.5px*var(--dt-fs,1)); color:var(--mu); }
+  .dt-rec-mock-row { display:flex; align-items:center; gap:6px; padding:5px 8px; border:1px solid var(--bd); border-radius:6px; background:var(--sf); }
+  .dt-rec-mock-summary { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:'IBM Plex Mono',monospace; font-size:calc(10.5px*var(--dt-fs,1)); color:var(--tx); }
+  .dt-rec-mock-edit, .dt-rec-mock-del { flex-shrink:0; display:flex; align-items:center; justify-content:center; padding:3px; background:transparent; border:none; color:var(--mu); cursor:pointer; border-radius:5px; transition:color .15s,background .15s; }
+  .dt-rec-mock-edit:hover { color:var(--ac); background:var(--ac-bg); }
+  .dt-rec-mock-del:hover { color:var(--rd); background:var(--rd-bg); }
+  .dt-rec-mock-form { display:flex; flex-direction:column; gap:5px; padding:8px; border:1px solid var(--bd); border-radius:7px; background:var(--sf); }
+  .dt-rec-mock-form-row { display:flex; align-items:center; gap:6px; }
+  .dt-rec-mock-form .dt-rec-mock-body { min-height:44px; }
+  .dt-rec-mock-form-actions { display:flex; gap:6px; }
+  /* Mock Fail picker (secondary modal) */
+  .dt-mockpick-sub { font-family:'IBM Plex Mono',monospace; font-size:calc(11px*var(--dt-fs,1)); color:var(--mu); margin-bottom:10px; word-break:break-all; }
+  .dt-mockpick-list { display:flex; flex-direction:column; gap:5px; max-height:50vh; overflow:auto; }
+  .dt-mockpick-row { display:flex; align-items:center; gap:6px; }
+  .dt-mockpick-check { flex-shrink:0; }
+  .dt-mockpick-apply { flex:1; min-width:0; display:flex; align-items:center; gap:7px; padding:7px 9px; border:1px solid var(--bd); border-radius:7px; background:var(--sf); color:var(--tx); cursor:pointer; text-align:left; transition:border-color .15s,background .15s; }
+  .dt-mockpick-apply:hover { border-color:var(--ac); background:var(--ac-bg); }
+  .dt-mockpick-tag { flex-shrink:0; font-size:calc(9px*var(--dt-fs,1)); font-weight:600; letter-spacing:.06em; text-transform:uppercase; padding:2px 6px; border-radius:5px; background:var(--bd); color:var(--tx2); }
+  .dt-mockpick-tag-endpoint { background:var(--ac-bg); color:var(--ac); }
+  .dt-mockpick-tag-history { background:var(--am-bg); color:var(--am); }
+  .dt-mockpick-tag-group { background:var(--vi-bg,var(--bd)); color:var(--vi); }
+  .dt-mockpick-badge { flex-shrink:0; font-family:'IBM Plex Mono',monospace; font-size:calc(10px*var(--dt-fs,1)); font-weight:600; color:var(--mu); }
+  .dt-mockpick-desc { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:calc(10.5px*var(--dt-fs,1)); color:var(--tx2); }
+  .dt-mockpick-edit, .dt-mockpick-del { flex-shrink:0; display:flex; align-items:center; justify-content:center; padding:5px; background:transparent; border:none; color:var(--mu); cursor:pointer; border-radius:5px; transition:color .15s,background .15s; }
+  .dt-mockpick-edit:hover { color:var(--ac); background:var(--ac-bg); }
+  .dt-mockpick-del:hover { color:var(--rd); background:var(--rd-bg); }
 
   /* Visually masks the Postman API key like a password field, WITHOUT using
      type="password" — that's what makes Chrome/most password managers offer to
