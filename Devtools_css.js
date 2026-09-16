@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.6.17
+// @version      3.6.18
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -789,6 +789,9 @@ const CSS = `
   .dt-baseurl-entry-mock:hover, .dt-baseurl-entry-mock.has-mock { border-color:var(--am-bd); color:var(--am); background:var(--am-bg); }
   .dt-baseurl-entry-mock-wrap { display:none; margin:0 0 2px 22px; }
   .dt-baseurl-entry-mock-wrap.open { display:block; }
+  .dt-baseurl-entry-mock-fields { display:flex; flex-wrap:wrap; gap:5px; margin-bottom:5px; }
+  .dt-baseurl-entry-mock-fields .dt-side-toggle { flex-shrink:0; }
+  .dt-baseurl-entry-mock-fields .dt-baseurl-entry-url { flex:1; min-width:120px; }
   .dt-baseurl-color-strip { display:flex; gap:5px; padding:2px 0; }
   .dt-baseurl-entry .dt-baseurl-color-strip { position:absolute; top:26px; left:0; z-index:20; background:var(--bg); border:1px solid var(--bd); border-radius:8px; padding:6px 8px; box-shadow:0 4px 16px rgba(0,0,0,.16); }
   .dt-baseurl-color-dot { width:16px; height:16px; border-radius:50%; cursor:pointer; border:2px solid transparent; transition:all .15s; flex-shrink:0; }

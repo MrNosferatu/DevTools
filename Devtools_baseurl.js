@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Base URL Switcher Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.17
+// @version      3.6.18
 // @description  Base URL Switcher plugin for DevTools Sidebar — a floating button for swapping between configured environments (prod/staging/...) on matching pages.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -119,6 +119,22 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
             <span class="dt-baseurl-match-label" style="flex-shrink:0">API prefix</span>
             <input class="dt-baseurl-entry-url" id="dt-bug-prefix-${gi}" placeholder="optional, e.g. /api" value="${escHtml(group.apiPrefix||'')}" spellcheck="false" autocomplete="off" style="flex:1">
           </div>
+          <div class="dt-baseurl-match-row" style="align-items:center">
+            <span class="dt-baseurl-match-label" style="flex-shrink:0">Mock mode</span>
+            <div class="dt-side-toggle" id="dt-bug-failmode-${gi}">
+              <button class="dt-side-btn${(group.mockFailMode||'')==='soft'?'':' active'}" data-failmode="" type="button" title="Inherit the mode from the global Mock Fail config">Inherit</button>
+              <button class="dt-side-btn${(group.mockFailMode||'')==='hard'?' active':''}" data-failmode="hard" type="button" title="Answer with the configured status code">Hard</button>
+              <button class="dt-side-btn${(group.mockFailMode||'')==='soft'?' active':''}" data-failmode="soft" type="button" title="Answer 200 OK carrying the same body">Soft</button>
+            </div>
+          </div>
+          <div class="dt-baseurl-match-row" style="align-items:center">
+            <span class="dt-baseurl-match-label" style="flex-shrink:0">Mock code</span>
+            <input class="dt-baseurl-entry-url" id="dt-bug-code-${gi}" placeholder="optional — fills {{code}}, overrides the global value" value="${escHtml(group.mockCode||'')}" spellcheck="false" autocomplete="off" style="flex:1">
+          </div>
+          <div class="dt-baseurl-match-row" style="align-items:center">
+            <span class="dt-baseurl-match-label" style="flex-shrink:0">Mock message</span>
+            <input class="dt-baseurl-entry-url" id="dt-bug-msg-${gi}" placeholder="optional — fills {{message}}, overrides the global value" value="${escHtml(group.mockMessage||'')}" spellcheck="false" autocomplete="off" style="flex:1">
+          </div>
           <div class="dt-baseurl-match-row" style="align-items:flex-start">
             <span class="dt-baseurl-match-label" style="flex-shrink:0;margin-top:6px">Mock body</span>
             <textarea class="dt-baseurl-mock-input" id="dt-bug-mock-${gi}" placeholder="optional — overrides the default Mock Fail response body for this group" spellcheck="false" style="flex:1">${escHtml(group.mockBody||'')}</textarea>
@@ -157,6 +173,21 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
         flagMockJson(e.target); // served as application/json → non-JSON reads back null
         saveGroupsSoon();
       });
+      // Group-level code/message/mode overrides — same precedence as the body
+      // (entry wins over group, group wins over the global default). Empty = inherit.
+      el.querySelector(`#dt-bug-code-${gi}`).addEventListener('input', e => {
+        state.baseUrl.groups[gi].mockCode = e.target.value;
+        saveGroupsSoon();
+      });
+      el.querySelector(`#dt-bug-msg-${gi}`).addEventListener('input', e => {
+        state.baseUrl.groups[gi].mockMessage = e.target.value;
+        saveGroupsSoon();
+      });
+      el.querySelectorAll(`#dt-bug-failmode-${gi} .dt-side-btn`).forEach(btn => btn.addEventListener('click', () => {
+        state.baseUrl.groups[gi].mockFailMode = btn.dataset.failmode; // '' = inherit
+        el.querySelectorAll(`#dt-bug-failmode-${gi} .dt-side-btn`).forEach(b => b.classList.toggle('active', b === btn));
+        saveGroupsSoon();
+      }));
       // Enabled toggle
       el.querySelector(`#dt-bug-enabled-${gi}`).addEventListener('change', e => {
         state.baseUrl.groups[gi].enabled = e.target.checked;
@@ -218,7 +249,7 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
         <div class="dt-baseurl-entry-color" id="dt-bue-color-${gi}-${ei}" style="background:${escHtml(entry.color)}" title="Pick color"></div>
         <input class="dt-baseurl-entry-label-input" placeholder="Label" value="${escHtml(entry.label||'')}" spellcheck="false">
         <input class="dt-baseurl-entry-url" placeholder="https://..." value="${escHtml(entry.url||'')}" spellcheck="false">
-        <button class="dt-baseurl-entry-mock${(entry.mockBody||'').trim()?' has-mock':''}" title="Mock Fail body override for this URL">5xx</button>
+        <button class="dt-baseurl-entry-mock${((entry.mockBody||'').trim()||(entry.mockCode||'').trim()||(entry.mockMessage||'').trim()||(entry.mockFailMode||''))?' has-mock':''}" title="Mock Fail overrides (mode / code / message / body) for this URL">5xx</button>
         <button class="dt-baseurl-entry-del" title="Remove">
           <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.7"><line x1="1" y1="1" x2="8" y2="8"/><line x1="8" y1="1" x2="1" y2="8"/></svg>
         </button>
@@ -267,19 +298,54 @@ DT_registerPlugin(function createBaseUrlPlugin(ctx) {
       // so the entry row stays compact.
       const mockWrap = document.createElement('div');
       mockWrap.className = 'dt-baseurl-entry-mock-wrap';
-      mockWrap.innerHTML = `<textarea class="dt-baseurl-mock-input" placeholder="optional — overrides the group/default Mock Fail body for this URL" spellcheck="false"></textarea>`;
+      mockWrap.innerHTML = `
+        <div class="dt-baseurl-entry-mock-fields">
+          <div class="dt-side-toggle dt-baseurl-entry-failmode">
+            <button class="dt-side-btn" data-failmode="" type="button" title="Inherit the mode from the group / global config">Inherit</button>
+            <button class="dt-side-btn" data-failmode="hard" type="button" title="Answer with the configured status code">Hard</button>
+            <button class="dt-side-btn" data-failmode="soft" type="button" title="Answer 200 OK carrying the same body">Soft</button>
+          </div>
+          <input class="dt-baseurl-entry-url dt-baseurl-entry-mock-code" placeholder="code — fills {{code}}" spellcheck="false" autocomplete="off">
+          <input class="dt-baseurl-entry-url dt-baseurl-entry-mock-msg" placeholder="message — fills {{message}}" spellcheck="false" autocomplete="off">
+        </div>
+        <textarea class="dt-baseurl-mock-input" placeholder="optional — overrides the group/default Mock Fail body for this URL" spellcheck="false"></textarea>`;
       const mockTa = mockWrap.querySelector('textarea');
       mockTa.value = entry.mockBody || '';
       const flagEntryJson = ta => { const v = ta.value.trim(); let bad = false; if (v) { try { JSON.parse(v); } catch { bad = true; } } ta.classList.toggle('dt-mock-invalid', bad); };
       flagEntryJson(mockTa);
       const mockBtn = row.querySelector('.dt-baseurl-entry-mock');
+      const hasEntryMock = () => !!((entry.mockBody||'').trim() || (entry.mockCode||'').trim() || (entry.mockMessage||'').trim() || (entry.mockFailMode||''));
       mockBtn.addEventListener('click', () => mockWrap.classList.toggle('open'));
       mockTa.addEventListener('input', e => {
         state.baseUrl.groups[gi].entries[ei].mockBody = e.target.value;
-        mockBtn.classList.toggle('has-mock', !!e.target.value.trim());
+        mockBtn.classList.toggle('has-mock', hasEntryMock());
         flagEntryJson(e.target); // served as application/json → non-JSON reads back null
         saveGroupsSoon();
       });
+      // Per-URL code/message/mode overrides — the most specific level (win over
+      // the group override and the global default). Empty = inherit.
+      const codeIn = mockWrap.querySelector('.dt-baseurl-entry-mock-code');
+      const msgIn = mockWrap.querySelector('.dt-baseurl-entry-mock-msg');
+      codeIn.value = entry.mockCode || '';
+      msgIn.value = entry.mockMessage || '';
+      codeIn.addEventListener('input', e => {
+        state.baseUrl.groups[gi].entries[ei].mockCode = e.target.value;
+        mockBtn.classList.toggle('has-mock', hasEntryMock());
+        saveGroupsSoon();
+      });
+      msgIn.addEventListener('input', e => {
+        state.baseUrl.groups[gi].entries[ei].mockMessage = e.target.value;
+        mockBtn.classList.toggle('has-mock', hasEntryMock());
+        saveGroupsSoon();
+      });
+      const failBtns = [...mockWrap.querySelectorAll('.dt-baseurl-entry-failmode .dt-side-btn')];
+      failBtns.forEach(b => b.classList.toggle('active', b.dataset.failmode === (entry.mockFailMode || '')));
+      failBtns.forEach(btn => btn.addEventListener('click', () => {
+        state.baseUrl.groups[gi].entries[ei].mockFailMode = btn.dataset.failmode; // '' = inherit
+        failBtns.forEach(b => b.classList.toggle('active', b === btn));
+        mockBtn.classList.toggle('has-mock', hasEntryMock());
+        saveGroupsSoon();
+      }));
       cont.appendChild(mockWrap);
     });
     // Persist ONLY when a missing color default was actually assigned. This
