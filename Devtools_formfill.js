@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Form Autofill Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.20
+// @version      3.6.21
 // @description  Form Autofill plugin for DevTools Sidebar — detect forms on the page, configure per-field fill values (fixed text, dynamic tokens, or defaults for selects/radios/checkboxes), with URL-param conditions, and fill them automatically on load.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -80,12 +80,42 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     return explicitLabelText(el) || el.getAttribute('aria-label') || el.value;
   }
 
-  function collectFields(root) {
-    // Never pick up the sidebar's own inputs (or the FAB/modals) — everything
-    // this userscript injects lives under dt-* ids.
-    const els = [...root.querySelectorAll('input,select,textarea')].filter(el =>
-      !SKIP_TYPES.includes((el.type || '').toLowerCase()) &&
-      !el.closest('[id^="dt-"]'));
+  // Search / command-palette / autocomplete controls that look like inputs but
+  // aren't data-entry form fields. Matched against name/id/placeholder/aria.
+  const SEARCHY = /(^|[\s._\-\[])(search|filter|query|lookup|find|autocomplete|combobox|command|palette)([\s._\-\]]|$)|^q$/i;
+  function ffVisible(el) {
+    if (!el || el.disabled || el.readOnly) return false;
+    if (el.closest('[aria-hidden="true"],[hidden]')) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return false;
+    let cs; try { cs = (el.ownerDocument.defaultView || window).getComputedStyle(el); } catch { return true; }
+    if (!cs) return true;
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && parseFloat(cs.opacity || '1') !== 0;
+  }
+  function ffSearchLike(el) {
+    const t = (el.type || '').toLowerCase();
+    if (t === 'search') return true;
+    const role = el.getAttribute('role');
+    if (role === 'searchbox' || role === 'combobox') return true;
+    if (el.closest('[role="search"]')) return true;
+    const hay = [el.name, el.id, el.getAttribute('placeholder'), el.getAttribute('aria-label'), el.getAttribute('aria-keyshortcuts')].filter(Boolean).join(' ');
+    return SEARCHY.test(hay);
+  }
+  // A DOM control worth offering for autofill. Skips the sidebar's own inputs
+  // (dt-* ids), non-fillable types, and anything invisible/disabled. With
+  // opts.excludeSearch it also drops search/command-palette boxes — applied to
+  // standalone inputs, where those controls usually aren't part of a real form.
+  function ffFillable(el, opts) {
+    opts = opts || {};
+    if (SKIP_TYPES.includes((el.type || '').toLowerCase())) return false;
+    if (el.closest('[id^="dt-"]')) return false;
+    if (!ffVisible(el)) return false;
+    if (opts.excludeSearch && ffSearchLike(el)) return false;
+    return true;
+  }
+
+  function collectFields(root, opts) {
+    const els = [...root.querySelectorAll('input,select,textarea')].filter(el => ffFillable(el, opts));
     const fields = [];
     const radioGroups = {};
     els.forEach((el, i) => {
@@ -134,18 +164,135 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     return 'Form #' + (idx + 1);
   }
 
+  // Short, reasonably stable CSS selector for a container — the persisted key
+  // for click-picked forms (so they re-detect on later visits).
+  function ffSelector(el) {
+    if (!el || el === document.body || el.nodeType !== 1) return 'body';
+    const parts = [];
+    let node = el;
+    for (let d = 0; node && node.nodeType === 1 && node !== document.body && d < 6; d++) {
+      if (node.id) { parts.unshift('#' + (window.CSS && CSS.escape ? CSS.escape(node.id) : node.id)); break; }
+      let sel = node.tagName.toLowerCase();
+      const nm = node.getAttribute && node.getAttribute('name');
+      if (nm) { parts.unshift(sel + `[name="${nm}"]`); break; }
+      const parent = node.parentElement;
+      if (parent) {
+        const sibs = [...parent.children].filter(c => c.tagName === node.tagName);
+        if (sibs.length > 1) sel += `:nth-of-type(${sibs.indexOf(node) + 1})`;
+      }
+      parts.unshift(sel);
+      node = node.parentElement;
+    }
+    return parts.join(' > ');
+  }
+  // Nearest ancestor that reads like a distinct form/group — used to cluster
+  // standalone inputs into labeled buckets instead of one big page list.
+  const GROUP_SEL = 'form,fieldset,[role="form"],[role="group"],dialog,[role="dialog"],section,[class*="form"],[class*="modal"],[class*="dialog"]';
+  function ffContainerLabel(c) {
+    if (!c) return '';
+    const aria = c.getAttribute && c.getAttribute('aria-label');
+    if (aria && aria.trim()) return cleanLabel(aria);
+    const heading = c.querySelector && c.querySelector('legend,h1,h2,h3,h4,[class*="title"],[class*="heading"]');
+    if (heading && heading.textContent.trim()) return cleanLabel(heading.textContent);
+    if (c.id) return '#' + c.id;
+    if (c.getAttribute && c.getAttribute('name')) return c.getAttribute('name');
+    return '';
+  }
+
   function detectPageForms() {
     const out = [];
     [...document.querySelectorAll('form')].forEach((f, i) => {
       if (f.closest('[id^="dt-"]')) return;
-      const fields = collectFields(f);
+      const fields = collectFields(f); // real <form>: keep every field, incl. search
       if (fields.length) out.push({ key: formKeyOf(f, i), label: formLabelOf(f, i), fields });
     });
-    // Standalone inputs outside any <form> (common in SPAs) are grouped as one
-    // synthetic "page" form so they're configurable too.
-    const loose = collectFields(document).filter(fd => !(fd.els || [fd.el]).some(e => e.closest('form')));
-    if (loose.length) out.push({ key: 'page', label: 'Page fields (no <form>)', fields: loose });
+    // Standalone inputs outside any <form> (common in SPAs): drop search/command
+    // UI, then cluster by nearest form-ish container so each real group is
+    // offered separately instead of one giant, mixed page bucket.
+    const loose = collectFields(document, { excludeSearch: true })
+      .filter(fd => !(fd.els || [fd.el]).some(e => e.closest('form')));
+    if (loose.length) {
+      const clusters = new Map();
+      loose.forEach(fd => {
+        const anchor = fd.els ? fd.els[0] : fd.el;
+        const c = anchor.closest(GROUP_SEL);
+        const ck = c || '__page__';
+        if (!clusters.has(ck)) clusters.set(ck, { container: c, fields: [] });
+        clusters.get(ck).fields.push(fd);
+      });
+      let gi = 0;
+      clusters.forEach(({ container, fields }) => {
+        if (container) out.push({ key: 'grp:' + ffSelector(container), label: ffContainerLabel(container) || ('Form group ' + (++gi)), fields });
+        else out.push({ key: 'page', label: 'Page fields (no <form>)', fields });
+      });
+    }
+    // Click-picked forms saved for this host: resolve their container selector so
+    // they re-detect (and auto-fill) later even where the heuristics miss them.
+    hostForms().filter(f => f.key && f.key.indexOf('pick:') === 0).forEach(cfg => {
+      if (out.some(o => o.key === cfg.key)) return;
+      let c = null; try { c = document.querySelector(cfg.key.slice(5)); } catch {}
+      if (!c) return;
+      const fields = collectFields(c);
+      if (fields.length) out.push({ key: cfg.key, label: cfg.label || ffContainerLabel(c) || 'Picked form', fields });
+    });
     return out;
+  }
+
+  // ── Click-to-pick a form/field on the page (most accurate detection) ────────
+  // Heuristics can't always tell a data-entry form from filter/search UI, so let
+  // the user point at the real thing. Hover highlights the nearest form-ish
+  // container; click configures its fields; Esc cancels.
+  let _pickActive = false;
+  function ffPickTarget(el) {
+    if (!el || el.nodeType !== 1) return null;
+    if (el.closest('[id^="dt-"]')) return null; // never our own sidebar/overlay
+    return el.closest(GROUP_SEL)
+      || (el.querySelector && el.querySelector('input,select,textarea') ? el : null)
+      || (el.closest && el.closest('div,section,li') )
+      || el;
+  }
+  function startFormPick() {
+    if (_pickActive) return;
+    _pickActive = true;
+    const doc = document, root = doc.documentElement;
+    const box = doc.createElement('div');
+    box.style.cssText = 'position:fixed;z-index:2147483646;pointer-events:none;border:2px solid #4c8dff;background:rgba(76,141,255,.15);border-radius:4px;display:none';
+    const hint = doc.createElement('div');
+    hint.textContent = 'Click a form or field to configure · Esc to cancel';
+    hint.style.cssText = 'position:fixed;z-index:2147483647;left:50%;top:14px;transform:translateX(-50%);background:#111;color:#fff;font:600 12px/1 system-ui,sans-serif;padding:8px 13px;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.35);pointer-events:none';
+    root.appendChild(box); root.appendChild(hint);
+    let target = null;
+    const onMove = e => {
+      target = ffPickTarget(e.target);
+      if (!target) { box.style.display = 'none'; return; }
+      const r = target.getBoundingClientRect();
+      box.style.display = 'block';
+      box.style.left = r.left + 'px'; box.style.top = r.top + 'px';
+      box.style.width = r.width + 'px'; box.style.height = r.height + 'px';
+    };
+    const cleanup = () => {
+      _pickActive = false;
+      doc.removeEventListener('mousemove', onMove, true);
+      doc.removeEventListener('click', onClick, true);
+      doc.removeEventListener('keydown', onKey, true);
+      box.remove(); hint.remove();
+    };
+    const onClick = e => {
+      if (e.target && e.target.closest && e.target.closest('[id^="dt-"]')) return; // let sidebar clicks through
+      e.preventDefault(); e.stopPropagation();
+      const el = target; cleanup();
+      if (el) finishFormPick(el);
+    };
+    const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); cleanup(); } };
+    doc.addEventListener('mousemove', onMove, true);
+    doc.addEventListener('click', onClick, true);
+    doc.addEventListener('keydown', onKey, true);
+  }
+  function finishFormPick(container) {
+    const fields = collectFields(container);
+    renderDetected();
+    if (!fields.length) return;
+    openEditor({ key: 'pick:' + ffSelector(container), label: ffContainerLabel(container) || 'Picked form', fields });
   }
 
   // ─── Template engine ─────────────────────────────────────────────────────────
@@ -347,10 +494,16 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
       <div class="dt-section">
         <div class="dt-slabel" style="display:flex;align-items:center;justify-content:space-between">
           Forms on this page
-          <button class="dt-pe-add-pattern" id="dt-ff-refresh" style="margin:0">
-            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10.5 6a4.5 4.5 0 1 1-1.3-3.2"/><path d="M10.7 1v2.3H8.4"/></svg>
-            Refresh
-          </button>
+          <span style="display:flex;gap:6px">
+            <button class="dt-pe-add-pattern" id="dt-ff-pick" style="margin:0" title="Click an element on the page to configure it as a form — the most reliable way when auto-detect misses or over-matches">
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 2l3 8 1.4-3.1L9.5 5.6 2 2z"/></svg>
+              Pick
+            </button>
+            <button class="dt-pe-add-pattern" id="dt-ff-refresh" style="margin:0">
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10.5 6a4.5 4.5 0 1 1-1.3-3.2"/><path d="M10.7 1v2.3H8.4"/></svg>
+              Refresh
+            </button>
+          </span>
         </div>
         <div id="dt-ff-detected"></div>
       </div>
@@ -395,6 +548,8 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
       Store.set('formfill.enabled', state.formfill.enabled);
     });
     $('dt-ff-refresh').addEventListener('click', renderDetected);
+    const pickBtn = $('dt-ff-pick');
+    if (pickBtn) pickBtn.addEventListener('click', () => startFormPick());
     // Re-detect whenever the user opens this panel — pages mutate constantly.
     const navBtn = $1('.dt-nav-btn[data-panel="formfill"]');
     if (navBtn) navBtn.addEventListener('click', renderDetected);

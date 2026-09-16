@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.20
+// @version      3.6.21
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
