@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.17
+// @version      3.6.18
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -3328,28 +3328,41 @@
       .replace(/\{\{code\}\}/g, code == null ? '' : String(code))
       .replace(/\{\{message\}\}/g, message == null ? '' : String(message));
   }
-  // Resolve the raw (pre-injection) body for a URL, most specific first:
-  // matching Base URL entry → its group → the global default → built-in.
-  function resolveMockRawBody(url) {
-    let body = '';
+  // Find the Base URL (group, entry) whose host matches this URL, if any —
+  // the source of any per-group / per-URL Mock Fail overrides.
+  function matchMockOverride(url) {
     try {
       const host = new URL(url, location.href).host;
-      outer:
       for (const g of ((state.baseUrl && state.baseUrl.groups) || [])) {
         if (g.enabled === false) continue;
         for (const e of (g.entries || [])) {
           if (!e.url) continue;
           let h; try { h = new URL(e.url.includes('://') ? e.url : 'http://' + e.url).host; } catch { continue; }
-          if (h !== host) continue;
-          const entryBody = (e.mockBody || '').trim();
-          if (entryBody) { body = entryBody; break outer; }
-          const groupBody = (g.mockBody || '').trim();
-          if (groupBody) { body = groupBody; break outer; }
+          if (h === host) return { group: g, entry: e };
         }
       }
     } catch {}
-    if (!body) body = (state.req.mockBody || '').trim() || MOCK_FAIL_FALLBACK_BODY;
-    return body;
+    return { group: null, entry: null };
+  }
+  // Resolve the Mock Fail config (raw body + code/message/mode) for a URL,
+  // most specific first: matching Base URL entry → its group → the global
+  // default from the Network panel. Each field resolves independently, so a
+  // group can override just the mode while inheriting the global body, etc.
+  // An empty override value means "inherit" (same convention as mockBody).
+  function resolveMockConfig(url) {
+    const { group, entry } = matchMockOverride(url);
+    const pick = (field, glob) => {
+      const ev = entry && entry[field] != null ? String(entry[field]).trim() : '';
+      if (ev) return ev;
+      const gv = group && group[field] != null ? String(group[field]).trim() : '';
+      if (gv) return gv;
+      return glob;
+    };
+    const body = pick('mockBody', (state.req.mockBody || '').trim()) || MOCK_FAIL_FALLBACK_BODY;
+    const code = pick('mockCode', state.req.mockCode || '');
+    const message = pick('mockMessage', state.req.mockMessage || '');
+    const mode = pick('mockFailMode', state.req.mockFailMode === 'soft' ? 'soft' : 'hard') === 'soft' ? 'soft' : 'hard';
+    return { body, code, message, mode };
   }
   // Build the mock served by the request modal. Returns the injected `body`
   // (placeholders resolved) plus the raw fields history records/dedupes on:
@@ -3366,14 +3379,17 @@
         headers: { 'content-type': 'application/json' },
       };
     }
-    const mode = state.req.mockFailMode === 'soft' ? 'soft' : 'hard';
+    // Code/message/mode/body may be overridden per group or per URL in the
+    // Environments tab (entry → group → global); see resolveMockConfig.
+    const cfg = resolveMockConfig(url);
+    const mode = cfg.mode;
     const editStatus = mockFailStatus();
     // soft → force a 200 OK (ok:true) carrying the same body; hard → the
     // configured status. The status field is ignored/greyed in soft mode.
     const status = mode === 'soft' ? 200 : editStatus;
-    const code = state.req.mockCode || '';
-    const message = state.req.mockMessage || '';
-    const rawBody = resolveMockRawBody(url);
+    const code = cfg.code;
+    const message = cfg.message;
+    const rawBody = cfg.body;
     return {
       status, editStatus, statusText: MOCK_STATUS_TEXT[status] || (mode === 'soft' ? 'OK' : 'Error'),
       mode, code, message, rawBody,
