@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Smart Dark Engine
 // @namespace    http://tampermonkey.net/
-// @version      3.6.19
+// @version      3.6.20
 // @description  Color-rewriting dark mode used by the Force Dark toggle. Must be @required before the main script.
 // @author       MrNosferatu
 // ==/UserScript==
