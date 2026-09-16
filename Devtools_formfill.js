@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Form Autofill Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.21
+// @version      3.6.22
 // @description  Form Autofill plugin for DevTools Sidebar — detect forms on the page, configure per-field fill values (fixed text, dynamic tokens, or defaults for selects/radios/checkboxes), with URL-param conditions, and fill them automatically on load.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -19,10 +19,19 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
   function classify(el) {
     if (el.tagName === 'SELECT') return 'select';
     if (el.tagName === 'TEXTAREA') return 'text';
-    const t = (el.type || 'text').toLowerCase();
-    if (t === 'checkbox') return 'checkbox';
-    if (t === 'radio') return 'radio';
-    return 'text'; // date/time/number/etc all accept a rendered template string
+    if (el.tagName === 'INPUT') {
+      const t = (el.type || 'text').toLowerCase();
+      if (t === 'checkbox') return 'checkbox';
+      if (t === 'radio') return 'radio';
+      return 'text'; // date/time/number/etc all accept a rendered template string
+    }
+    // Custom (non-native) controls: classify by ARIA role / popup semantics.
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    const pop = (el.getAttribute('aria-haspopup') || '').toLowerCase();
+    if (role === 'switch' || role === 'checkbox') return 'checkbox';
+    if (role === 'radio') return 'radio';
+    if (role === 'combobox' || role === 'listbox' || pop === 'menu' || pop === 'listbox' || pop === 'true') return 'menu';
+    return 'text'; // textbox / spinbutton / contenteditable
   }
 
   function cleanLabel(t) {
@@ -55,7 +64,7 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
         .filter(c => c !== el && !((el.type || '').toLowerCase() === 'radio' && c.name && c.name === el.name));
       if (others.length) break;
       const cands = [...parent.querySelectorAll('label,span,legend')]
-        .filter(c => !c.contains(el) && !c.querySelector('input,select,textarea') && c.textContent.trim());
+        .filter(c => !c.contains(el) && !el.contains(c) && !c.querySelector('input,select,textarea') && c.textContent.trim());
       // Prefer text that appears BEFORE the input (the usual label position),
       // but accept trailing text too (common for checkboxes).
       const before = cands.find(c => c.compareDocumentPosition(el) & 4 /* el follows c */);
@@ -114,13 +123,43 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     return true;
   }
 
+  // Custom (non-native) controls that act as form fields on modern sites:
+  // contenteditable, ARIA widgets, and menu/dropdown trigger buttons (which
+  // have no <input>/<select> and no options in the DOM until opened).
+  const CUSTOM_SEL = [
+    '[contenteditable=""]', '[contenteditable="true"]',
+    '[role="textbox"]', '[role="combobox"]', '[role="listbox"]', '[role="spinbutton"]',
+    '[role="switch"]', '[role="checkbox"]', '[role="radio"]',
+    '[aria-haspopup="menu"]', '[aria-haspopup="listbox"]', '[aria-haspopup="dialog"]', '[aria-haspopup="true"]',
+  ].join(',');
+
+  // HTML validation constraints on a native <input>, snapshotted so fills can
+  // clamp/truncate to them and the editor can hint them.
+  function readConstraints(el) {
+    const c = {}, t = (el.type || '').toLowerCase();
+    if (el.hasAttribute('min')) c.min = el.getAttribute('min');
+    if (el.hasAttribute('max')) c.max = el.getAttribute('max');
+    if (el.hasAttribute('step')) c.step = el.getAttribute('step');
+    if (typeof el.maxLength === 'number' && el.maxLength > 0) c.maxLength = el.maxLength;
+    if (el.hasAttribute('pattern')) c.pattern = el.getAttribute('pattern');
+    if (el.required) c.required = true;
+    if (['number', 'range', 'email', 'url', 'tel', 'date', 'time'].includes(t)) c.type = t;
+    return Object.keys(c).length ? c : null;
+  }
+
   function collectFields(root, opts) {
-    const els = [...root.querySelectorAll('input,select,textarea')].filter(el => ffFillable(el, opts));
+    const native = [...root.querySelectorAll('input,select,textarea')];
+    const custom = [...root.querySelectorAll(CUSTOM_SEL)];
+    let els = [...native, ...custom].filter(el => ffFillable(el, opts));
+    // Keep the innermost control: drop any element that is an ancestor of
+    // another kept one (e.g. a combobox wrapper around its real <input>).
+    els = els.filter(el => !els.some(o => o !== el && el.contains(o)));
     const fields = [];
     const radioGroups = {};
     els.forEach((el, i) => {
+      const isNative = el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA';
       const type = classify(el);
-      if (type === 'radio') {
+      if (type === 'radio' && isNative) {
         const name = el.name || '@radio' + i;
         const opt = { value: el.value, label: optionLabelFor(el) };
         if (radioGroups[name]) { radioGroups[name].els.push(el); radioGroups[name].options.push(opt); return; }
@@ -129,14 +168,17 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
         fields.push(fd);
         return;
       }
-      const key = el.name ? 'n:' + el.name : el.id ? 'i:' + el.id : '@' + i;
+      const key = el.name ? 'n:' + el.name : el.id ? 'i:' + el.id : isNative ? '@' + i : 'c:' + ffSelector(el);
       fields.push({
         key,
         label: labelFor(el),
         type,
-        inputType: el.tagName === 'SELECT' ? 'select' : el.tagName === 'TEXTAREA' ? 'textarea' : (el.type || 'text').toLowerCase(),
+        inputType: !isNative ? (type === 'menu' ? 'menu' : (el.getAttribute('role') || 'custom'))
+          : el.tagName === 'SELECT' ? 'select' : el.tagName === 'TEXTAREA' ? 'textarea' : (el.type || 'text').toLowerCase(),
         el,
-        options: type === 'select'
+        custom: !isNative,
+        constraints: (isNative && el.tagName === 'INPUT') ? readConstraints(el) : null,
+        options: (type === 'select' && isNative)
           ? [...el.options].map(o => ({ value: o.value, label: (o.textContent || '').trim() || o.value }))
           : type === 'checkbox'
             ? [{ value: 'checked', label: 'Checked' }, { value: 'unchecked', label: 'Unchecked' }]
@@ -431,6 +473,74 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
+  // Clamp/truncate a rendered value to a native input's HTML constraints so a
+  // fill never violates min/max/step/maxlength (best-effort; pattern/type are
+  // left to the page to reject).
+  function applyConstraints(el, value, c) {
+    if (!c) return value;
+    let v = String(value);
+    if (c.maxLength && v.length > c.maxLength) v = v.slice(0, c.maxLength);
+    const t = (el.type || '').toLowerCase();
+    if (t === 'number' || t === 'range') {
+      let n = parseFloat(v);
+      if (!isNaN(n)) {
+        if (c.min !== undefined && c.min !== '' && n < +c.min) n = +c.min;
+        if (c.max !== undefined && c.max !== '' && n > +c.max) n = +c.max;
+        v = String(n);
+      }
+    }
+    return v;
+  }
+
+  function setContentEditable(el, value) {
+    try {
+      el.focus();
+      el.textContent = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    } catch (e) { console.warn('[DevTools] contenteditable fill failed', e); }
+  }
+
+  // Best-effort fill for custom widgets. Reliable for contenteditable and
+  // ARIA toggles; menu/dropdown fill (see selectFromMenu) is inherently
+  // site-dependent and may silently fail.
+  function fillCustom(lf, value) {
+    const el = lf.el;
+    if (lf.type === 'checkbox') {
+      const want = value === 'checked';
+      const on = el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-pressed') === 'true';
+      if (on !== want) { try { el.click(); } catch {} }
+      return;
+    }
+    if (lf.type === 'radio') { try { el.click(); } catch {} return; }
+    if (lf.type === 'menu') { selectFromMenu(el, value); return; }
+    setContentEditable(el, value); // role=textbox / contenteditable
+  }
+
+  // Open a custom dropdown and click the option whose visible text matches
+  // `want`. There's no standard contract for these, so this pattern-matches the
+  // common ones (a visible menu/listbox popup with option-ish children) and
+  // gives up quietly if nothing matches within a short window.
+  function selectFromMenu(trigger, want) {
+    const target = String(want).replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!target) return;
+    try { trigger.click(); } catch { return; }
+    let tries = 0;
+    const attempt = () => {
+      const menus = [...document.querySelectorAll('[role="menu"],[role="listbox"],[class*="menu"],[class*="dropdown"],[class*="option"],[class*="popover"],[class*="popper"]')]
+        .filter(m => !m.closest('[id^="dt-"]') && m.offsetParent !== null);
+      const scopes = menus.length ? menus : [document];
+      for (const m of scopes) {
+        const opt = [...m.querySelectorAll('[role="option"],[role="menuitem"],[role="menuitemradio"],li,a,button,[class*="option"],[class*="item"]')]
+          .find(o => o.offsetParent !== null && !o.closest('[id^="dt-"]') && (o.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase() === target);
+        if (opt) { try { opt.click(); } catch {} return; }
+      }
+      if (++tries < 10) setTimeout(attempt, 90);
+      else { try { trigger.click(); } catch {} } // close the popup we opened
+    };
+    setTimeout(attempt, 70);
+  }
+
   // Fills one saved form config against its live detected counterpart.
   // Auto-run passes force=false so late-retry passes never re-fill a field the
   // user may have already edited; "Fill now" passes force=true.
@@ -445,8 +555,10 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
       const raw = resolveValue(fc);
       if (raw == null || raw === '') return;
       try {
-        if (lf.type === 'text') {
-          setNativeValue(lf.el, renderTemplate(raw));
+        if (lf.custom) {
+          fillCustom(lf, (lf.type === 'text' || lf.type === 'menu') ? renderTemplate(raw) : raw);
+        } else if (lf.type === 'text') {
+          setNativeValue(lf.el, applyConstraints(lf.el, renderTemplate(raw), lf.constraints));
         } else if (lf.type === 'select') {
           setNativeValue(lf.el, raw);
         } else if (lf.type === 'checkbox') {
@@ -456,7 +568,7 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
           if (!target) return;
           setNativeChecked(target, true);
         }
-        els.forEach(e => { e.dataset.dtFfFilled = '1'; });
+        els.forEach(e => { if (e && e.dataset) e.dataset.dtFfFilled = '1'; });
         filled++;
       } catch (e) {
         console.warn('[DevTools] Form fill failed for field', fc.key, e);
@@ -627,10 +739,32 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     }
   }
 
+  // A muted one-liner under a field: its native validation constraints, and/or
+  // a note that a custom control is filled best-effort.
+  function fieldHint(fc) {
+    const parts = [];
+    if (fc.custom && fc.type === 'menu') parts.push('custom dropdown — best-effort (selects the option matching the label)');
+    else if (fc.custom) parts.push('custom control — best-effort fill');
+    const c = fc.constraints;
+    if (c) {
+      if (c.type) parts.push('type ' + c.type);
+      if (c.min !== undefined) parts.push('min ' + c.min);
+      if (c.max !== undefined) parts.push('max ' + c.max);
+      if (c.step !== undefined) parts.push('step ' + c.step);
+      if (c.maxLength) parts.push('maxlength ' + c.maxLength);
+      if (c.pattern) parts.push('pattern ' + c.pattern);
+      if (c.required) parts.push('required');
+    }
+    return parts.join(' · ');
+  }
+
   // Shared default/condition value editor: text-ish fields get a template
   // input, enumerated fields (select/radio/checkbox) get their options as a
   // dropdown — per the field metadata snapshot.
   function valueEditorHtml(fc, current, extraCls) {
+    if (fc.type === 'menu') {
+      return `<input class="dt-ff-input ${extraCls}" value="${escHtml(current || '')}" placeholder="option label to select, e.g. Manga (best-effort)" spellcheck="false" autocomplete="off">`;
+    }
     if (fc.type === 'text') {
       return `<input class="dt-ff-input ${extraCls}" value="${escHtml(current || '')}" placeholder="${escHtml(templatePlaceholder(fc))}" spellcheck="false" autocomplete="off">`;
     }
@@ -748,6 +882,7 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     cfg.fields.forEach(fc => {
       const row = document.createElement('div');
       row.className = 'dt-ff-field';
+      const hint = fieldHint(fc);
       row.innerHTML = `
         <div class="dt-ff-field-head">
           <label class="dt-toggle" style="width:34px;height:18px;flex-shrink:0" title="${fc.fill ? 'Autofill enabled' : 'Autofill disabled'}">
@@ -758,6 +893,7 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
           <span class="dt-ff-badge">${escHtml(fc.inputType || fc.type)}</span>
         </div>
         <div class="dt-ff-field-body" style="${fc.fill ? '' : 'display:none'}">
+          ${hint ? `<div class="dt-ff-hint" style="margin-bottom:8px">${escHtml(hint)}</div>` : ''}
           <div class="dt-ff-val-row">
             <span class="dt-ff-cond-txt">Default</span>
             <div class="dt-ff-val-wrap"></div>
@@ -777,9 +913,10 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
       const valWrap = row.querySelector('.dt-ff-val-wrap');
       valWrap.innerHTML = valueEditorHtml(fc, fc.value, 'dt-ff-val');
       const valEl = valWrap.querySelector('.dt-ff-val');
-      valEl.addEventListener(fc.type === 'text' ? 'input' : 'change', e => {
+      const textLike = fc.type === 'text' || fc.type === 'menu';
+      valEl.addEventListener(textLike ? 'input' : 'change', e => {
         fc.value = e.target.value;
-        fc.type === 'text' ? saveFormsSoon() : saveFormsNow();
+        textLike ? saveFormsSoon() : saveFormsNow();
       });
 
       const condsCont = row.querySelector('.dt-ff-conds');
@@ -836,9 +973,10 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
       if (exprIn) exprIn.addEventListener('input', e => { c.expr = e.target.value; saveFormsSoon(); });
       const valWrap = row.querySelector('.dt-ff-cond-val-wrap');
       valWrap.innerHTML = valueEditorHtml(fc, c.value, 'dt-ff-cond-val');
-      valWrap.querySelector('.dt-ff-cond-val').addEventListener(fc.type === 'text' ? 'input' : 'change', e => {
+      const condTextLike = fc.type === 'text' || fc.type === 'menu';
+      valWrap.querySelector('.dt-ff-cond-val').addEventListener(condTextLike ? 'input' : 'change', e => {
         c.value = e.target.value;
-        fc.type === 'text' ? saveFormsSoon() : saveFormsNow();
+        condTextLike ? saveFormsSoon() : saveFormsNow();
       });
       row.querySelector('.dt-ff-cond-del').addEventListener('click', () => {
         fc.conditions.splice(ci, 1);
