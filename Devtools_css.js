@@ -741,6 +741,11 @@ const CSS = `
      null for JSON consumers. Flagged, not blocked. */
   .dt-mock-body-ed.dt-mock-invalid, .dt-baseurl-mock-input.dt-mock-invalid { border-color:var(--rd); }
   .dt-mock-body-ed.dt-mock-invalid:focus, .dt-baseurl-mock-input.dt-mock-invalid:focus { box-shadow:0 0 0 3px var(--rd-bg); }
+  /* Mock Fail per-endpoint history shortcuts */
+  .dt-mock-hist-item { display:flex; align-items:center; gap:8px; width:100%; box-sizing:border-box; margin-bottom:4px; padding:5px 8px; border:1.5px solid var(--bd); border-radius:6px; background:var(--sf); color:var(--tx); cursor:pointer; text-align:left; transition:border-color .15s,background .15s; }
+  .dt-mock-hist-item:hover { border-color:var(--ac); background:var(--ac-bg); }
+  .dt-mock-hist-badge { flex-shrink:0; font-family:'IBM Plex Mono',monospace; font-size:calc(10px*var(--dt-fs,1)); font-weight:600; color:var(--mu); }
+  .dt-mock-hist-desc { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:calc(10.5px*var(--dt-fs,1)); color:var(--tx); }
 
   /* Duplicate param button */
   .dt-param-dup { width:24px; height:24px; border-radius:5px; cursor:pointer; background:transparent; border:1px solid var(--bd); color:var(--fa); font-size:calc(13px*var(--dt-fs,1)); display:flex; align-items:center; justify-content:center; flex-shrink:0; transition:all .12s; }

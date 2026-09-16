@@ -81,6 +81,15 @@
       // overridden per Base URL group / URL entry (see resolveMockFailure).
       mockStatus: Store.get('req.mockStatus', 500),
       mockBody:   Store.get('req.mockBody', ''),
+      // {{code}}/{{message}} are substituted into the body when the mock is
+      // served (see applyMockTemplate). mockFailMode: 'hard' answers with the
+      // configured status; 'soft' forces a 200 OK carrying the same body (for
+      // testing "success-shaped error" payloads). mockHistory keeps recently
+      // applied mocks per endpoint (METHOD path) as click-to-fill shortcuts.
+      mockCode:     Store.get('req.mockCode', ''),
+      mockMessage:  Store.get('req.mockMessage', ''),
+      mockFailMode: Store.get('req.mockFailMode', 'hard'),
+      mockHistory:  Store.get('req.mockHistory', {}),
     },
     res: {
       enabled:       Store.get('res.enabled', false),
@@ -161,6 +170,10 @@
     'req.methods':  () => { state.req.methods = Store.get('req.methods', ['POST','PUT','PATCH']); syncNetworkPanel(); },
     'req.mockStatus': () => { state.req.mockStatus = Store.get('req.mockStatus', 500); syncNetworkPanel(); },
     'req.mockBody':   () => { state.req.mockBody = Store.get('req.mockBody', ''); syncNetworkPanel(); },
+    'req.mockCode':    () => { state.req.mockCode = Store.get('req.mockCode', ''); syncNetworkPanel(); },
+    'req.mockMessage': () => { state.req.mockMessage = Store.get('req.mockMessage', ''); syncNetworkPanel(); },
+    'req.mockFailMode':() => { state.req.mockFailMode = Store.get('req.mockFailMode', 'hard'); syncNetworkPanel(); },
+    'req.mockHistory': () => { state.req.mockHistory = Store.get('req.mockHistory', {}); syncNetworkPanel(); },
 
     'res.enabled':  () => { state.res.enabled = Store.get('res.enabled', false); syncNetworkPanel(); },
     'res.persist':  () => { state.res.persist = Store.get('res.persist', false); syncNetworkPanel(); },
@@ -1404,6 +1417,18 @@
       Store.setSoon('req.mockBody', state.req.mockBody);
       updateMockFailureHint();
     });
+    const mockCodeIn = $('dt-req-mock-code');
+    if (mockCodeIn) mockCodeIn.addEventListener('input', e => {
+      state.req.mockCode = e.target.value;
+      Store.setSoon('req.mockCode', state.req.mockCode);
+    });
+    const mockMessageIn = $('dt-req-mock-message');
+    if (mockMessageIn) mockMessageIn.addEventListener('input', e => {
+      state.req.mockMessage = e.target.value;
+      Store.setSoon('req.mockMessage', state.req.mockMessage);
+    });
+    // Hard/soft mode toggle (mirrors the Server Action mode toggle above).
+    $$('#dt-req-fail-mode .dt-side-btn').forEach(btn => btn.addEventListener('click', () => setMockFailMode(btn.dataset.failmode)));
 
     // ── Response interceptor enable/persist ───────────────────────────────────
     $('dt-res-enabled').addEventListener('change', e => {
@@ -1765,6 +1790,12 @@
     // (this also runs on cross-tab sync); same guard as the regex fields.
     const ms=$('dt-req-mock-status'); if(ms && dtRoot.activeElement!==ms) ms.value=state.req.mockStatus;
     const mb=$('dt-req-mock-body'); if(mb && dtRoot.activeElement!==mb) mb.value=state.req.mockBody||'';
+    const mc=$('dt-req-mock-code'); if(mc && dtRoot.activeElement!==mc) mc.value=state.req.mockCode||'';
+    const mm=$('dt-req-mock-message'); if(mm && dtRoot.activeElement!==mm) mm.value=state.req.mockMessage||'';
+    const soft=state.req.mockFailMode==='soft';
+    $$('#dt-req-fail-mode .dt-side-btn').forEach(b=>b.classList.toggle('active', b.dataset.failmode===(soft?'soft':'hard')));
+    const msRow=$('dt-req-mock-status-row'); if(msRow) msRow.classList.toggle('dt-row-disabled', soft);
+    renderMockHistory();
     updateMockFailureHint();
     updateQueueUI('req');
     const se=$('dt-res-enabled'); if(se) se.checked=state.res.enabled;
@@ -2472,6 +2503,7 @@
   function showReqModal(req) {
     const ov=$('dt-req-overlay');
     state.currentReq=req; // used by Edit Memory to scope suggestions to this endpoint
+    renderMockHistory(); // scope Mock Fail history shortcuts to this endpoint
     $('dt-req-url').textContent=req.url;
     const mt=$('dt-req-method');mt.textContent=req.method;mt.className=`dt-method-tag ${req.method}`;
     const isGET=req.method==='GET';
@@ -2537,11 +2569,14 @@
       () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);const editedHeaders=collectHeaders('dt-req-hinner');if(isGET)req.resolve({editedUrl:buildEditedUrl(req.url,'dt-req-params-list'),editedHeaders});else if(req.bodyReadonly){req.resolve({editedHeaders});}else{recordEditFromModal('req',req.url,req.method,req.body,$('dt-req-ed').value);req.resolve({editedBody:$('dt-req-ed').value,editedHeaders});}showNextModal(); },
       // Aborting a Server Action crashes the page (see "Next.js Server
       // Actions"), so for actions this button is "Hang": never answer.
-      () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);if(isAction)req.resolve({hang:true});else req.reject(new DOMException('Aborted by DevTools','AbortError'));showNextModal(); }
+      // Abort now answers with a generic mock failure (500 "Request aborted")
+      // through the same path as Mock Fail — one code path, two entry points.
+      // Actions still "Hang" (a fabricated response would crash the page).
+      () => { ov.classList.remove('visible');removeFromQueue('pendingReqs',req);if(isAction)req.resolve({hang:true});else req.resolve({mock:resolveMockFailure(req.url,{generic:true})});showNextModal(); }
     );
     const abortBtnEl = $('dt-req-abort');
     abortBtnEl.textContent = isAction ? 'Hang' : 'Abort';
-    abortBtnEl.title = isAction ? "Never answer — the action stays pending, so you can test loading states. (Aborting a Server Action would crash the page.)" : 'Abort — the page sees a network error';
+    abortBtnEl.title = isAction ? "Never answer — the action stays pending, so you can test loading states. (Aborting a Server Action would crash the page.)" : 'Abort — answer with a generic 500 “Request aborted” failure';
     // Mock Fail — never send the request; answer it with the configured mock
     // failure response instead (fetch/XHR paths fabricate the response from
     // result.mock). Resolved per-URL so Environments overrides apply.
@@ -2573,6 +2608,7 @@
         newMockFail.addEventListener('click', () => {
           ov.classList.remove('visible');
           removeFromQueue('pendingReqs', req);
+          recordMockHistory(req.method, req.url, mock);
           req.resolve({ mock });
           showNextModal();
         });
@@ -3281,8 +3317,20 @@
       catch { return new realWindow.Response(m.body || ''); }
     }
   }
-  function resolveMockFailure(url) {
-    const status = mockFailStatus();
+  // Generic mock used by the request modal's Abort button — a fixed failure,
+  // never the user's custom code/message/body (see resolveMockFailure(generic)).
+  const MOCK_ABORT_BODY = '{"success":false,"error":"Request aborted"}';
+  // Substitute {{code}}/{{message}} placeholders in a mock body just before it
+  // becomes the response. Applied in both hard and soft modes; the RAW body
+  // (placeholders intact) is what gets stored/deduped/refilled by history.
+  function applyMockTemplate(body, { code, message } = {}) {
+    return String(body == null ? '' : body)
+      .replace(/\{\{code\}\}/g, code == null ? '' : String(code))
+      .replace(/\{\{message\}\}/g, message == null ? '' : String(message));
+  }
+  // Resolve the raw (pre-injection) body for a URL, most specific first:
+  // matching Base URL entry → its group → the global default → built-in.
+  function resolveMockRawBody(url) {
     let body = '';
     try {
       const host = new URL(url, location.href).host;
@@ -3301,7 +3349,60 @@
       }
     } catch {}
     if (!body) body = (state.req.mockBody || '').trim() || MOCK_FAIL_FALLBACK_BODY;
-    return { status, statusText: MOCK_STATUS_TEXT[status] || 'Error', body, headers: { 'content-type': 'application/json' } };
+    return body;
+  }
+  // Build the mock served by the request modal. Returns the injected `body`
+  // (placeholders resolved) plus the raw fields history records/dedupes on:
+  // `rawBody`, `editStatus` (the user's status field), `mode`, `code`,
+  // `message`. `generic:true` produces the fixed Abort mock, ignoring the
+  // custom code/message/body — one path, two entry points (Mock Fail / Abort).
+  function resolveMockFailure(url, opts = {}) {
+    if (opts.generic) {
+      const code = '', message = 'Request aborted';
+      return {
+        status: 500, editStatus: 500, statusText: MOCK_STATUS_TEXT[500] || 'Error',
+        mode: 'hard', code, message, rawBody: MOCK_ABORT_BODY,
+        body: applyMockTemplate(MOCK_ABORT_BODY, { code, message }),
+        headers: { 'content-type': 'application/json' },
+      };
+    }
+    const mode = state.req.mockFailMode === 'soft' ? 'soft' : 'hard';
+    const editStatus = mockFailStatus();
+    // soft → force a 200 OK (ok:true) carrying the same body; hard → the
+    // configured status. The status field is ignored/greyed in soft mode.
+    const status = mode === 'soft' ? 200 : editStatus;
+    const code = state.req.mockCode || '';
+    const message = state.req.mockMessage || '';
+    const rawBody = resolveMockRawBody(url);
+    return {
+      status, editStatus, statusText: MOCK_STATUS_TEXT[status] || (mode === 'soft' ? 'OK' : 'Error'),
+      mode, code, message, rawBody,
+      body: applyMockTemplate(rawBody, { code, message }),
+      headers: { 'content-type': 'application/json' },
+    };
+  }
+  // Endpoint key for per-endpoint history: METHOD + ' ' + pathname (query
+  // stripped) so the same route reuses its shortcuts regardless of params.
+  function mockEndpointKey(method, url) {
+    let path;
+    try { path = new URL(url, location.href).pathname; } catch { path = String(url || '').split('?')[0]; }
+    return (method || 'GET').toUpperCase() + ' ' + path;
+  }
+  // Record an applied mock under its endpoint, storing the RAW body/fields.
+  // Distinct only: two entries with identical raw template + code + message +
+  // mode + status collapse to one (ts aside). Cap ~10, newest first.
+  function recordMockHistory(method, url, mock) {
+    if (!mock || mock.generic) return;
+    const key = mockEndpointKey(method, url);
+    const entry = { status: mock.editStatus, code: mock.code || '', message: mock.message || '', body: mock.rawBody || '', mode: mock.mode || 'hard', ts: Date.now() };
+    const list = (state.req.mockHistory[key] || []).slice();
+    const dup = list.some(e => e.body === entry.body && (e.code || '') === entry.code && (e.message || '') === entry.message && (e.mode || 'hard') === entry.mode && e.status === entry.status);
+    if (dup) return;
+    list.unshift(entry);
+    if (list.length > 10) list.length = 10;
+    state.req.mockHistory[key] = list;
+    Store.setSoon('req.mockHistory', state.req.mockHistory);
+    syncNetworkPanel();
   }
   // A mock body that isn't valid JSON reads back as `null` for any consumer
   // using JSON parsing (fetch .json(), XHR responseType:'json', axios's default
@@ -3315,7 +3416,53 @@
     if (body) { try { JSON.parse(body); } catch { bad = true; } }
     const bodyEl = $('dt-req-mock-body');
     if (bodyEl) bodyEl.classList.toggle('dt-mock-invalid', bad);
-    if (el) el.textContent = `${mockFailStatus()} · ${body ? 'custom body' : 'default body'}${bad ? ' · ⚠ invalid JSON' : ''}`;
+    const soft = state.req.mockFailMode === 'soft';
+    const statusLabel = soft ? '200 (soft)' : String(mockFailStatus());
+    if (el) el.textContent = `${statusLabel} · ${body ? 'custom body' : 'default body'}${bad ? ' · ⚠ invalid JSON' : ''}`;
+  }
+  // Hard/soft fork. In soft mode the served status is forced to 200, so the
+  // status field is greyed out (its value is ignored — see resolveMockFailure).
+  function setMockFailMode(mode) {
+    state.req.mockFailMode = mode === 'soft' ? 'soft' : 'hard';
+    Store.setSoon('req.mockFailMode', state.req.mockFailMode);
+    syncNetworkPanel();
+  }
+  // Refill the Mock Fail fields from a stored history entry — the RAW template
+  // (placeholders intact), so it can be edited further before re-applying.
+  function fillMockFromHistory(entry) {
+    if (!entry) return;
+    state.req.mockStatus = entry.status;
+    state.req.mockCode = entry.code || '';
+    state.req.mockMessage = entry.message || '';
+    state.req.mockBody = entry.body || '';
+    state.req.mockFailMode = entry.mode === 'soft' ? 'soft' : 'hard';
+    Store.setSoon('req.mockStatus', state.req.mockStatus);
+    Store.setSoon('req.mockCode', state.req.mockCode);
+    Store.setSoon('req.mockMessage', state.req.mockMessage);
+    Store.setSoon('req.mockBody', state.req.mockBody);
+    Store.setSoon('req.mockFailMode', state.req.mockFailMode);
+    syncNetworkPanel();
+  }
+  // Render the per-endpoint history as click-to-fill shortcuts. Scoped to the
+  // request currently shown in the modal (state.currentReq); hidden otherwise.
+  function renderMockHistory() {
+    const wrap = $('dt-req-mock-history');
+    if (!wrap) return;
+    const req = state.currentReq;
+    const key = req ? mockEndpointKey(req.method, req.url) : null;
+    const list = key ? (state.req.mockHistory[key] || []) : [];
+    if (!list.length) { wrap.innerHTML = ''; wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    const rows = list.map((e, i) => {
+      const badge = e.mode === 'soft' ? '200·soft' : String(e.status);
+      const desc = (e.message || e.body || '').replace(/\s+/g, ' ').trim().slice(0, 44) || '(empty body)';
+      return `<button class="dt-mock-hist-item" type="button" data-hist="${i}" title="Click to fill these fields">`
+        + `<span class="dt-mock-hist-badge">${escHtml(badge)}</span>`
+        + `<span class="dt-mock-hist-desc">${escHtml(desc)}</span></button>`;
+    }).join('');
+    wrap.innerHTML = `<div class="dt-flabel" style="margin:12px 0 5px">Recent — ${escHtml(key)}</div>${rows}`;
+    $$('#dt-req-mock-history .dt-mock-hist-item').forEach(btn =>
+      btn.addEventListener('click', () => fillMockFromHistory(list[+btn.dataset.hist])));
   }
   function tryAutoTransform(url, body) {
     if (!state.res.autoTransform) return null;
