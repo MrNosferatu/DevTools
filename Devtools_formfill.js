@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Form Autofill Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.22
+// @version      3.6.23
 // @description  Form Autofill plugin for DevTools Sidebar — detect forms on the page, configure per-field fill values (fixed text, dynamic tokens, or defaults for selects/radios/checkboxes), with URL-param conditions, and fill them automatically on load.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -241,6 +241,45 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     return '';
   }
 
+  // ── Merged form groups ──────────────────────────────────────────────────────
+  // One logical form is often split across several containers (multi-step
+  // wizards, side-by-side cards, a modal plus the page behind it), so detection
+  // reports it as several separate forms and every field has to be configured
+  // one bucket at a time. A merge config (key "merge:<id>") names the detection
+  // keys of its members and is presented as ONE detected form. Member field
+  // keys are namespaced "<memberKey>»<fieldKey>" so same-named fields coming
+  // from different members stay distinct, and so a member can be split back out
+  // later without losing its settings.
+  const MERGE_SEP = '\u00BB';
+  const isMergeKey = k => typeof k === 'string' && k.indexOf('merge:') === 0;
+  const mergedKey = (memberKey, fieldKey) => memberKey + MERGE_SEP + fieldKey;
+  function splitMergedKey(k) {
+    const i = String(k).indexOf(MERGE_SEP);
+    return i < 0 ? { member: '', field: k } : { member: k.slice(0, i), field: k.slice(i + 1) };
+  }
+  // Fold every saved merge group for this host into the detection result: the
+  // members it found are removed and replaced by a single combined entry.
+  // Members that aren't on this page are simply skipped, so a partially present
+  // group still works.
+  function applyMerges(out) {
+    const merges = hostForms().filter(f => isMergeKey(f.key) && (f.members || []).length);
+    if (!merges.length) return out;
+    const byKey = new Map(out.map(d => [d.key, d]));
+    const consumed = new Set();
+    const groups = [];
+    merges.forEach(cfg => {
+      const fields = [];
+      (cfg.members || []).forEach(m => {
+        const det = byKey.get(m.key);
+        if (!det || consumed.has(m.key)) return;
+        consumed.add(m.key);
+        det.fields.forEach(fd => fields.push({ ...fd, key: mergedKey(m.key, fd.key), group: m.label || det.label }));
+      });
+      if (fields.length) groups.push({ key: cfg.key, label: cfg.label, fields, merged: true, memberCount: (cfg.members || []).length });
+    });
+    return [...groups, ...out.filter(d => !consumed.has(d.key))];
+  }
+
   function detectPageForms() {
     const out = [];
     [...document.querySelectorAll('form')].forEach((f, i) => {
@@ -277,7 +316,7 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
       const fields = collectFields(c);
       if (fields.length) out.push({ key: cfg.key, label: cfg.label || ffContainerLabel(c) || 'Picked form', fields });
     });
-    return out;
+    return applyMerges(out);
   }
 
   // ── Click-to-pick a form/field on the page (most accurate detection) ────────
@@ -629,6 +668,7 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
   // ─── Panel logic ─────────────────────────────────────────────────────────────
   let detected = [];      // last detection result (holds live element refs)
   let editingId = null;   // id of the config open in the editor
+  let selected = new Set(); // detection keys ticked for grouping
 
   // Debounced persistence for rapid typing in template/condition inputs —
   // Store.set serializes the whole forms array synchronously (see the identical
@@ -679,6 +719,8 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     const list = $('dt-ff-detected');
     if (!list) return;
     detected = detectPageForms();
+    // Forget ticks whose form left the page (SPA navigation, closed modal, ...)
+    selected = new Set([...selected].filter(k => detected.some(d => d.key === k)));
     list.innerHTML = '';
     if (!detected.length) {
       list.innerHTML = '<div class="dt-ff-empty">No fillable forms found on this page.</div>';
@@ -689,15 +731,129 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
       const el = document.createElement('div');
       el.className = 'dt-ff-item' + (cfg && cfg.id === editingId ? ' selected' : '');
       el.innerHTML = `
+        <label class="dt-ff-selbox" title="Tick two or more forms, then Group them into one config">
+          <input type="checkbox" class="dt-ff-sel" ${selected.has(det.key) ? 'checked' : ''}>
+        </label>
         <div class="dt-ff-item-main">
-          <div class="dt-ff-item-name">${escHtml(det.label)}</div>
-          <div class="dt-ff-item-meta">${det.fields.length} field${det.fields.length === 1 ? '' : 's'}${cfg ? ' · <span style="color:var(--ac)">configured</span>' : ''}</div>
+          <div class="dt-ff-item-name">${escHtml(det.label)}${det.merged ? ' <span class="dt-ff-badge">group</span>' : ''}</div>
+          <div class="dt-ff-item-meta">${det.fields.length} field${det.fields.length === 1 ? '' : 's'}${det.merged ? ` · ${det.memberCount} form${det.memberCount === 1 ? '' : 's'}` : ''}${cfg ? ' · <span style="color:var(--ac)">configured</span>' : ''}</div>
         </div>
+        ${det.merged ? '<button class="dt-ff-ungroup" title="Split this group back into its separate forms, keeping each one\u2019s field settings">Ungroup</button>' : ''}
         <span class="dt-ff-item-cta">${cfg ? 'Edit' : 'Configure'}</span>
       `;
+      const chk = el.querySelector('.dt-ff-sel');
+      // The row itself opens the editor, so the tick box must not bubble.
+      el.querySelector('.dt-ff-selbox').addEventListener('click', e => e.stopPropagation());
+      chk.addEventListener('change', e => {
+        if (e.target.checked) selected.add(det.key); else selected.delete(det.key);
+        renderGroupBar();
+      });
+      const un = el.querySelector('.dt-ff-ungroup');
+      if (un) un.addEventListener('click', e => { e.stopPropagation(); ungroupForm(findCfg(det.key)); });
       el.addEventListener('click', () => openEditor(det));
       list.appendChild(el);
     });
+    const bar = document.createElement('div');
+    bar.id = 'dt-ff-groupbar';
+    bar.className = 'dt-ff-groupbar';
+    list.appendChild(bar);
+    renderGroupBar();
+  }
+
+  // Action bar under the detected list — only present once something is ticked.
+  function renderGroupBar() {
+    const bar = $('dt-ff-groupbar');
+    if (!bar) return;
+    const n = selected.size;
+    if (!n) { bar.innerHTML = ''; bar.style.display = 'none'; return; }
+    bar.style.display = '';
+    bar.innerHTML = `
+      <span class="dt-ff-groupbar-txt">${n} selected</span>
+      <button class="dt-ff-groupbar-clear" type="button">Clear</button>
+      <button class="dt-ff-groupbar-go" type="button" ${n < 2 ? 'disabled title="Tick at least two forms"' : ''}>Group into one form</button>
+    `;
+    bar.querySelector('.dt-ff-groupbar-clear').addEventListener('click', () => { selected.clear(); renderDetected(); });
+    const go = bar.querySelector('.dt-ff-groupbar-go');
+    if (!go.disabled) go.addEventListener('click', () => groupSelected());
+  }
+
+  // ── Group / ungroup ─────────────────────────────────────────────────────────
+  // Expand a detection key into the member list it contributes: an existing
+  // group contributes its own members (so groups nest flat), anything else
+  // contributes itself.
+  function membersOf(key) {
+    const cfg = findCfg(key);
+    if (cfg && (cfg.members || []).length) return cfg.members.map(m => ({ ...m }));
+    const det = detected.find(d => d.key === key);
+    return [{ key, label: (det && det.label) || key }];
+  }
+  // Move an already-saved config's field settings into the group being built,
+  // then drop the now-redundant config. Keys from a plain form get namespaced;
+  // keys from a group are already namespaced and carry over as-is.
+  function absorbConfig(key, target) {
+    const old = findCfg(key);
+    if (!old) return;
+    const wasGroup = (old.members || []).length > 0;
+    (old.fields || []).forEach(fc => {
+      const k = wasGroup ? fc.key : mergedKey(key, fc.key);
+      if (target.fields.some(f => f.key === k)) return;
+      target.fields.push({ ...fc, key: k, group: fc.group || old.label });
+    });
+    state.formfill.forms = state.formfill.forms.filter(f => f.id !== old.id);
+  }
+
+  function groupSelected() {
+    // Keep the on-page order so the group reads top-to-bottom like the page.
+    const keys = detected.map(d => d.key).filter(k => selected.has(k));
+    if (keys.length < 2) return;
+    const members = [];
+    keys.forEach(k => membersOf(k).forEach(m => { if (!members.some(x => x.key === m.key)) members.push(m); }));
+    const id = Date.now();
+    const cfg = {
+      id, host: location.host, key: 'merge:' + id,
+      label: members.map(m => m.label).join(' + ').slice(0, 80),
+      enabled: true, autoRun: true, members, fields: [],
+    };
+    // Absorb before pushing so findCfg() inside absorbConfig can't see the new
+    // group and eat its own fields.
+    keys.forEach(k => absorbConfig(k, cfg));
+    state.formfill.forms.push(cfg);
+    saveFormsNow();
+    selected.clear();
+    // Re-detect so the members collapse into the new group, then open it.
+    detected = detectPageForms();
+    const det = detected.find(d => d.key === cfg.key);
+    editingId = cfg.id;
+    renderDetected();
+    renderSaved();
+    if (det) openEditor(det); else openModal();
+  }
+
+  // Split a group back into one config per member, un-namespacing field keys so
+  // each member keeps exactly the settings it contributed.
+  function ungroupForm(cfg) {
+    if (!cfg || !(cfg.members || []).length) return;
+    let seq = 0;
+    cfg.members.forEach(m => {
+      const own = (cfg.fields || []).filter(fc => splitMergedKey(fc.key).member === m.key);
+      if (!own.length) return;
+      let t = findCfg(m.key);
+      if (!t) {
+        t = { id: Date.now() + (++seq), host: location.host, key: m.key, label: m.label, enabled: cfg.enabled, autoRun: cfg.autoRun !== false, fields: [] };
+        state.formfill.forms.push(t);
+      }
+      own.forEach(fc => {
+        const k = splitMergedKey(fc.key).field;
+        if (t.fields.some(f => f.key === k)) return;
+        const copy = { ...fc, key: k };
+        delete copy.group;
+        t.fields.push(copy);
+      });
+    });
+    state.formfill.forms = state.formfill.forms.filter(f => f.id !== cfg.id);
+    saveFormsNow();
+    if (editingId === cfg.id) closeModal(); // also re-renders both lists
+    else { renderDetected(); renderSaved(); }
   }
 
   // Opens (creating or merging a saved config for) the given detected form.
@@ -720,7 +876,19 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
       fc.type = lf.type;
       fc.inputType = lf.inputType;
       fc.options = lf.options;
+      if (lf.group) fc.group = lf.group; // which member of a group it came from
     });
+    // Newly detected fields are appended, which would scatter a group's members
+    // across the editor. Re-order by member so each subheading appears once.
+    if ((cfg.members || []).length) {
+      const rank = new Map(cfg.members.map((m, i) => [m.key, i]));
+      const pos = new Map(cfg.fields.map((f, i) => [f, i]));
+      cfg.fields.sort((a, b) => {
+        const ra = rank.has(splitMergedKey(a.key).member) ? rank.get(splitMergedKey(a.key).member) : 1e6;
+        const rb = rank.has(splitMergedKey(b.key).member) ? rank.get(splitMergedKey(b.key).member) : 1e6;
+        return ra - rb || pos.get(a) - pos.get(b);
+      });
+    }
     saveFormsNow();
     editingId = cfg.id;
     renderDetected();
@@ -853,9 +1021,21 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     const cont = $('dt-ff-editor');
     const cfg = state.formfill.forms.find(f => f.id === editingId);
     if (!cont || !cfg) return;
+    const members = cfg.members || [];
     $('dt-ff-modal-title').textContent = cfg.label;
-    $('dt-ff-modal-sub').textContent = `${cfg.host} · ${cfg.fields.length} field${cfg.fields.length === 1 ? '' : 's'}`;
+    $('dt-ff-modal-sub').textContent = `${cfg.host} · ${cfg.fields.length} field${cfg.fields.length === 1 ? '' : 's'}`
+      + (members.length ? ` · ${members.length} grouped forms` : '');
     cont.innerHTML = `
+      ${members.length ? `
+      <div class="dt-ff-group-box">
+        <div class="dt-ff-val-row" style="margin-bottom:7px">
+          <span class="dt-ff-cond-txt">Name</span>
+          <div class="dt-ff-val-wrap"><input class="dt-ff-input" id="dt-ff-group-label" value="${escHtml(cfg.label || '')}" placeholder="Group name" spellcheck="false" autocomplete="off"></div>
+        </div>
+        <div class="dt-ff-group-members">${members.map((m, i) =>
+          `<span class="dt-ff-chip" title="${escHtml(m.key)}">${escHtml(m.label || m.key)}<button class="dt-ff-chip-x" data-i="${i}" title="Remove this form from the group">&times;</button></span>`
+        ).join('')}</div>
+      </div>` : ''}
       <div class="dt-ff-modal-toggles">
         <div class="dt-row">
           <div class="dt-row-label">Enable this form</div>
@@ -872,6 +1052,38 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     `;
     $('dt-ff-form-enabled').addEventListener('change', e => { cfg.enabled = e.target.checked; saveFormsNow(); renderSaved(); });
     $('dt-ff-form-autorun').addEventListener('change', e => { cfg.autoRun = e.target.checked; saveFormsNow(); });
+    const labelIn = $('dt-ff-group-label');
+    if (labelIn) labelIn.addEventListener('input', e => {
+      cfg.label = e.target.value;
+      $('dt-ff-modal-title').textContent = cfg.label;
+      saveFormsSoon();
+    });
+    cont.querySelectorAll('.dt-ff-chip-x').forEach(btn => btn.addEventListener('click', () => {
+      const m = members[+btn.dataset.i];
+      if (!m) return;
+      // Dropping the last-but-one member leaves a group of one, which is just
+      // the member itself — ungroup entirely instead.
+      if (members.length <= 2) { ungroupForm(cfg); return; }
+      // Hand this member's fields back to a standalone config for it.
+      const own = (cfg.fields || []).filter(fc => splitMergedKey(fc.key).member === m.key);
+      if (own.length) {
+        let t = findCfg(m.key);
+        if (!t) { t = { id: Date.now(), host: location.host, key: m.key, label: m.label, enabled: cfg.enabled, autoRun: cfg.autoRun !== false, fields: [] }; state.formfill.forms.push(t); }
+        own.forEach(fc => {
+          const k = splitMergedKey(fc.key).field;
+          if (t.fields.some(f => f.key === k)) return;
+          const copy = { ...fc, key: k };
+          delete copy.group;
+          t.fields.push(copy);
+        });
+      }
+      cfg.members = members.filter(x => x.key !== m.key);
+      cfg.fields = (cfg.fields || []).filter(fc => splitMergedKey(fc.key).member !== m.key);
+      saveFormsNow();
+      renderEditor();
+      renderDetected();
+      renderSaved();
+    }));
     renderFields(cfg);
   }
 
@@ -879,7 +1091,17 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     const cont = $('dt-ff-fields');
     if (!cont) return;
     cont.innerHTML = '';
+    // In a group, fields stay in member order and get a subheading each time the
+    // source form changes, so it still reads as the separate forms it came from.
+    let lastGroup = null;
     cfg.fields.forEach(fc => {
+      if ((cfg.members || []).length && (fc.group || '') !== lastGroup) {
+        lastGroup = fc.group || '';
+        const h = document.createElement('div');
+        h.className = 'dt-ff-group-head';
+        h.textContent = lastGroup || 'Ungrouped';
+        cont.appendChild(h);
+      }
       const row = document.createElement('div');
       row.className = 'dt-ff-field';
       const hint = fieldHint(fc);
@@ -1000,8 +1222,8 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
       el.className = 'dt-ff-item' + (cfg.id === editingId ? ' selected' : '');
       el.innerHTML = `
         <div class="dt-ff-item-main">
-          <div class="dt-ff-item-name">${escHtml(cfg.label)}</div>
-          <div class="dt-ff-item-meta">${cfg.fields.filter(f => f.fill).length}/${cfg.fields.length} fields set${onPage ? '' : ' · <span style="color:var(--mu)">not on this page</span>'}</div>
+          <div class="dt-ff-item-name">${escHtml(cfg.label)}${(cfg.members || []).length ? ' <span class="dt-ff-badge">group</span>' : ''}</div>
+          <div class="dt-ff-item-meta">${cfg.fields.filter(f => f.fill).length}/${cfg.fields.length} fields set${(cfg.members || []).length ? ` · ${cfg.members.length} forms` : ''}${onPage ? '' : ' · <span style="color:var(--mu)">not on this page</span>'}</div>
         </div>
         <label class="dt-toggle" style="width:34px;height:18px;flex-shrink:0" title="${cfg.enabled ? 'Enabled' : 'Disabled'}">
           <input type="checkbox" class="dt-ff-saved-enabled" ${cfg.enabled ? 'checked' : ''}>

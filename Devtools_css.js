@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.6.22
+// @version      3.6.23
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -1162,6 +1162,26 @@ const CSS = `
   .dt-ff-item-name { font-size:calc(12px*var(--dt-fs,1)); font-weight:600; color:var(--tx); font-family:'IBM Plex Mono',monospace; word-break:break-all; }
   .dt-ff-item-meta { font-size:calc(10.5px*var(--dt-fs,1)); color:var(--mu); margin-top:2px; }
   .dt-ff-item-cta { flex-shrink:0; font-size:calc(10px*var(--dt-fs,1)); font-weight:600; color:var(--ac); }
+  /* Regroup detected forms: per-row tick box, the action bar under the list,
+     and the group's own header inside the config modal. */
+  .dt-ff-selbox { flex-shrink:0; display:flex; align-items:center; padding:2px; cursor:pointer; }
+  .dt-ff-sel { width:13px; height:13px; margin:0; cursor:pointer; accent-color:var(--ac); }
+  .dt-ff-ungroup { flex-shrink:0; border:1px solid var(--bd); background:var(--sf2); color:var(--tx2); font-size:calc(9.5px*var(--dt-fs,1)); font-weight:600; padding:2px 7px; border-radius:5px; cursor:pointer; transition:all .15s; }
+  .dt-ff-ungroup:hover { border-color:var(--rd); color:var(--rd); background:var(--rd-bg); }
+  .dt-ff-groupbar { display:flex; align-items:center; gap:7px; margin-top:7px; padding:7px 9px; background:var(--ac-bg); border:1.5px solid var(--ac-bd); border-radius:7px; }
+  .dt-ff-groupbar-txt { flex:1; font-size:calc(10.5px*var(--dt-fs,1)); font-weight:600; color:var(--ac); }
+  .dt-ff-groupbar-clear { border:none; background:transparent; color:var(--mu); font-size:calc(10.5px*var(--dt-fs,1)); cursor:pointer; padding:2px 4px; }
+  .dt-ff-groupbar-clear:hover { color:var(--tx); text-decoration:underline; }
+  .dt-ff-groupbar-go { border:1.5px solid var(--ac); background:var(--ac); color:var(--ac-tx,#fff); font-size:calc(10.5px*var(--dt-fs,1)); font-weight:600; padding:4px 10px; border-radius:6px; cursor:pointer; transition:filter .15s; }
+  .dt-ff-groupbar-go:hover { filter:brightness(1.08); }
+  .dt-ff-groupbar-go:disabled { opacity:.45; cursor:not-allowed; filter:none; }
+  .dt-ff-group-box { margin-bottom:10px; padding:9px 12px; background:var(--sf); border:1px solid var(--bd); border-radius:8px; }
+  .dt-ff-group-members { display:flex; flex-wrap:wrap; gap:5px; }
+  .dt-ff-chip { display:inline-flex; align-items:center; gap:4px; max-width:100%; padding:2px 4px 2px 8px; border:1px solid var(--bd); background:var(--sf2); border-radius:11px; font-size:calc(10px*var(--dt-fs,1)); color:var(--tx2); font-family:'IBM Plex Mono',monospace; overflow:hidden; }
+  .dt-ff-chip-x { flex-shrink:0; width:15px; height:15px; display:flex; align-items:center; justify-content:center; border:none; background:transparent; color:var(--mu); border-radius:50%; cursor:pointer; font-size:calc(12px*var(--dt-fs,1)); line-height:1; transition:all .15s; }
+  .dt-ff-chip-x:hover { background:var(--rd-bg); color:var(--rd); }
+  .dt-ff-group-head { margin:10px 0 5px; font-size:calc(9.5px*var(--dt-fs,1)); font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--mu); border-bottom:1px solid var(--bd); padding-bottom:3px; }
+  .dt-ff-group-head:first-child { margin-top:0; }
   .dt-ff-hint { font-size:calc(10px*var(--dt-fs,1)); color:var(--mu); line-height:1.5; font-family:'IBM Plex Mono',monospace; word-break:break-word; }
   .dt-ff-field { border:1px solid var(--bd); border-radius:7px; background:var(--sf); padding:7px 9px; margin-bottom:6px; }
   .dt-ff-field-head { display:flex; align-items:center; gap:8px; }
