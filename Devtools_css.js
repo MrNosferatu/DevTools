@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.6.23
+// @version      3.6.24
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -1182,6 +1182,8 @@ const CSS = `
   .dt-ff-chip-x:hover { background:var(--rd-bg); color:var(--rd); }
   .dt-ff-group-head { margin:10px 0 5px; font-size:calc(9.5px*var(--dt-fs,1)); font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--mu); border-bottom:1px solid var(--bd); padding-bottom:3px; }
   .dt-ff-group-head:first-child { margin-top:0; }
+  .dt-ff-field-dup { opacity:.62; }
+  .dt-ff-dup-note { margin-top:5px; font-size:calc(9.5px*var(--dt-fs,1)); color:var(--mu); font-style:italic; }
   .dt-ff-hint { font-size:calc(10px*var(--dt-fs,1)); color:var(--mu); line-height:1.5; font-family:'IBM Plex Mono',monospace; word-break:break-word; }
   .dt-ff-field { border:1px solid var(--bd); border-radius:7px; background:var(--sf); padding:7px 9px; margin-bottom:6px; }
   .dt-ff-field-head { display:flex; align-items:center; gap:8px; }

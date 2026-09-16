@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Form Autofill Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.23
+// @version      3.6.24
 // @description  Form Autofill plugin for DevTools Sidebar — detect forms on the page, configure per-field fill values (fixed text, dynamic tokens, or defaults for selects/radios/checkboxes), with URL-param conditions, and fill them automatically on load.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -269,13 +269,32 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     const groups = [];
     merges.forEach(cfg => {
       const fields = [];
+      // Members can overlap and hand us the SAME element twice — a picked
+      // container wrapping a real <form>, or one pick nested in another. Only
+      // the first member to claim an element keeps it, so the group fills it
+      // once instead of writing it twice with the last config winning. Member
+      // order is stable, so which one wins is deterministic.
+      const owner = new Map();   // element -> label of the member that claimed it
+      const dupes = new Map();   // namespaced key -> label of the claiming member
       (cfg.members || []).forEach(m => {
         const det = byKey.get(m.key);
         if (!det || consumed.has(m.key)) return;
         consumed.add(m.key);
-        det.fields.forEach(fd => fields.push({ ...fd, key: mergedKey(m.key, fd.key), group: m.label || det.label }));
+        const label = m.label || det.label;
+        det.fields.forEach(fd => {
+          const els = fd.els || (fd.el ? [fd.el] : []);
+          const key = mergedKey(m.key, fd.key);
+          // Fully covered by an earlier member → skip. A partial overlap (some
+          // radios shared) is left alone rather than half-dropped.
+          if (els.length && els.every(e => owner.has(e))) {
+            dupes.set(key, owner.get(els[0]));
+            return;
+          }
+          els.forEach(e => { if (!owner.has(e)) owner.set(e, label); });
+          fields.push({ ...fd, key, group: label });
+        });
       });
-      if (fields.length) groups.push({ key: cfg.key, label: cfg.label, fields, merged: true, memberCount: (cfg.members || []).length });
+      if (fields.length) groups.push({ key: cfg.key, label: cfg.label, fields, merged: true, memberCount: (cfg.members || []).length, dupes });
     });
     return [...groups, ...out.filter(d => !consumed.has(d.key))];
   }
@@ -309,12 +328,23 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     }
     // Click-picked forms saved for this host: resolve their container selector so
     // they re-detect (and auto-fill) later even where the heuristics miss them.
-    hostForms().filter(f => f.key && f.key.indexOf('pick:') === 0).forEach(cfg => {
-      if (out.some(o => o.key === cfg.key)) return;
-      let c = null; try { c = document.querySelector(cfg.key.slice(5)); } catch {}
+    // A picked form is only ever found this way, so the keys must be collected
+    // from grouped members too — grouping absorbs (and deletes) a member's own
+    // config, and without this the picked container would stop resolving and
+    // the whole group would come back empty.
+    const picked = new Map();
+    hostForms().forEach(cfg => {
+      if (cfg.key && cfg.key.indexOf('pick:') === 0) picked.set(cfg.key, cfg.label);
+      (cfg.members || []).forEach(m => {
+        if (m.key && m.key.indexOf('pick:') === 0 && !picked.has(m.key)) picked.set(m.key, m.label);
+      });
+    });
+    picked.forEach((label, key) => {
+      if (out.some(o => o.key === key)) return;
+      let c = null; try { c = document.querySelector(key.slice(5)); } catch {}
       if (!c) return;
       const fields = collectFields(c);
-      if (fields.length) out.push({ key: cfg.key, label: cfg.label || ffContainerLabel(c) || 'Picked form', fields });
+      if (fields.length) out.push({ key, label: label || ffContainerLabel(c) || 'Picked form', fields });
     });
     return applyMerges(out);
   }
@@ -836,7 +866,10 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     let seq = 0;
     cfg.members.forEach(m => {
       const own = (cfg.fields || []).filter(fc => splitMergedKey(fc.key).member === m.key);
-      if (!own.length) return;
+      // A picked form is only detectable while a config names it, so it always
+      // gets one back — even empty. Heuristic members re-detect on their own,
+      // so skip those to avoid littering the saved list.
+      if (!own.length && m.key.indexOf('pick:') !== 0) return;
       let t = findCfg(m.key);
       if (!t) {
         t = { id: Date.now() + (++seq), host: location.host, key: m.key, label: m.label, enabled: cfg.enabled, autoRun: cfg.autoRun !== false, fields: [] };
@@ -982,7 +1015,9 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
       // Filled something → close so the user sees the result; otherwise stay
       // open and explain why nothing happened.
       if (det && fillForm(cfg, det, true) > 0) { closeModal(); return; }
-      status.textContent = det ? 'No fields enabled above' : 'Form not found on this page';
+      status.textContent = det ? 'No fields enabled above'
+        : (cfg.members || []).length ? 'None of this group\u2019s forms are on this page'
+        : 'Form not found on this page';
       clearTimeout(ensureModal._statusTimer);
       ensureModal._statusTimer = setTimeout(() => { const s = $('dt-ff-fill-status'); if (s) s.textContent = ''; }, 2500);
     });
@@ -1066,7 +1101,7 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
       if (members.length <= 2) { ungroupForm(cfg); return; }
       // Hand this member's fields back to a standalone config for it.
       const own = (cfg.fields || []).filter(fc => splitMergedKey(fc.key).member === m.key);
-      if (own.length) {
+      if (own.length || m.key.indexOf('pick:') === 0) {
         let t = findCfg(m.key);
         if (!t) { t = { id: Date.now(), host: location.host, key: m.key, label: m.label, enabled: cfg.enabled, autoRun: cfg.autoRun !== false, fields: [] }; state.formfill.forms.push(t); }
         own.forEach(fc => {
@@ -1090,6 +1125,10 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
   function renderFields(cfg) {
     const cont = $('dt-ff-fields');
     if (!cont) return;
+    // Fields a group dropped as duplicates of an earlier member: still listed,
+    // but flagged, so an enabled-looking field that never fills is explained.
+    const detGroup = detected.find(d => d.key === cfg.key);
+    const dupes = (detGroup && detGroup.dupes) || new Map();
     cont.innerHTML = '';
     // In a group, fields stay in member order and get a subheading each time the
     // source form changes, so it still reads as the separate forms it came from.
@@ -1103,7 +1142,8 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
         cont.appendChild(h);
       }
       const row = document.createElement('div');
-      row.className = 'dt-ff-field';
+      const dupOf = dupes.get(fc.key);
+      row.className = 'dt-ff-field' + (dupOf ? ' dt-ff-field-dup' : '');
       const hint = fieldHint(fc);
       row.innerHTML = `
         <div class="dt-ff-field-head">
@@ -1114,6 +1154,7 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
           <span class="dt-ff-field-name" title="${escHtml(fc.key)}">${escHtml(fc.label || fc.key)}</span>
           <span class="dt-ff-badge">${escHtml(fc.inputType || fc.type)}</span>
         </div>
+        ${dupOf ? `<div class="dt-ff-dup-note">Same field as in \u201C${escHtml(dupOf)}\u201D \u2014 filled there, ignored here</div>` : ''}
         <div class="dt-ff-field-body" style="${fc.fill ? '' : 'display:none'}">
           ${hint ? `<div class="dt-ff-hint" style="margin-bottom:8px">${escHtml(hint)}</div>` : ''}
           <div class="dt-ff-val-row">
