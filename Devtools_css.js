@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.6.19
+// @version      3.6.20
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -918,7 +918,12 @@ const CSS = `
   .dt-rec-mock-form-row { display:flex; align-items:center; gap:6px; }
   .dt-rec-mock-form .dt-rec-mock-body { min-height:44px; }
   .dt-rec-mock-form-actions { display:flex; gap:6px; }
-  /* Mock Fail picker (secondary modal) */
+  /* Mock Fail picker (secondary modal). The core's show/hide rules are
+     ID-scoped to the four built-in overlays, and the base .dt-overlay class is
+     NOT hidden by default — so this overlay needs its own hide rule (same as
+     the form-fill plugin's #dt-ff-overlay) or it renders on page load. */
+  #dt-mockpick-overlay { visibility:hidden; opacity:0; pointer-events:none; transition:opacity .18s ease; }
+  #dt-mockpick-overlay.visible { visibility:visible; opacity:1; pointer-events:all; }
   .dt-mockpick-sub { font-family:'IBM Plex Mono',monospace; font-size:calc(11px*var(--dt-fs,1)); color:var(--mu); margin-bottom:10px; word-break:break-all; }
   .dt-mockpick-list { display:flex; flex-direction:column; gap:5px; max-height:50vh; overflow:auto; }
   .dt-mockpick-row { display:flex; align-items:center; gap:6px; }
