@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.6.25
+// @version      3.6.26
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
