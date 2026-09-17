@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.25
+// @version      3.6.26
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -330,8 +330,34 @@
     (document.head || document.documentElement).appendChild(link);
   }
 
+  // Neutralize page-level focus traps (Ant Design / rc-dialog Modals and the
+  // like) that yank focus back into their dialog whenever it "escapes". Our UI
+  // lives in a sibling shadow host, so focusing one of our inputs while such a
+  // modal is open triggers the trap and the field becomes uneditable ("input
+  // blocked"). Registered at document-start (before any page modal mounts) on
+  // window+document CAPTURE so it runs before the page's own listener; for focus
+  // events whose retargeted path includes our host, stopImmediatePropagation
+  // prevents the page's trap from ever seeing them. The focus still lands (these
+  // events aren't cancelable), and our own UI never relies on focus-event
+  // propagation (it focuses elements imperatively), so nothing of ours breaks —
+  // and page events (target outside our host) are untouched.
+  function installFocusIsolation() {
+    if (installFocusIsolation._done) return;
+    installFocusIsolation._done = true;
+    const guard = e => {
+      if (!dtHost) return;
+      const inUs = e.composedPath ? e.composedPath().indexOf(dtHost) !== -1 : (e.target === dtHost);
+      if (inUs) e.stopImmediatePropagation();
+    };
+    ['focusin', 'focusout', 'focus', 'blur'].forEach(type => {
+      try { window.addEventListener(type, guard, true); } catch {}
+      try { document.addEventListener(type, guard, true); } catch {}
+    });
+  }
+
   function inject() {
     injectCriticalHide(); // safety: ensure the guard exists before any element is inserted
+    installFocusIsolation(); // defuse page focus traps (antd Modal, etc.) that steal our inputs' focus
     injectFonts();
     const mount = rootMount();
     const style = document.createElement('style');
