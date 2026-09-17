@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — API Recorder Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.24
+// @version      3.6.25
 // @description  API Recorder plugin for DevTools Sidebar — passively documents endpoint shapes and exports/pushes them as a Postman collection.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -451,12 +451,35 @@ DT_registerPlugin(function createRecorderPlugin(ctx) {
   function updateMockByKey(key, id, mock) { const arr = getMocksByKey(key).map(m => m.id === id ? normMock({ ...mock, id }) : m); setMocksByKey(key, arr); }
   function deleteMockByKey(key, id) { setMocksByKey(key, getMocksByKey(key).filter(m => m.id !== id)); }
 
+  // Every scope key an endpoint mock for this URL could have been saved under.
+  // The save path (renderEndpointDetail) keys by the display bucket's scope,
+  // which can be 'host:<host>' or 'group:<id>' depending on merge mode and
+  // whether the host belongs to a Base URL group — so resolution at request
+  // time must check all of them, or picker/interceptor lookups miss the mock.
+  function candidateMockKeys(url, method) {
+    let u; try { u = new URL(url, location.href); } catch { return []; }
+    const ek = (method || 'GET').toUpperCase() + ' ' + normalizePath(u.pathname);
+    const keys = new Set([endpointMockKey(scopeIdForHost(u.host), ek), endpointMockKey('host:' + u.host, ek)]);
+    const direct = state.recorder.data['host:' + u.host];
+    if (direct && direct.groupId != null) keys.add(endpointMockKey('group:' + direct.groupId, ek));
+    const g = state.baseUrl.groups.find(gr => getGroupHosts(gr).has(u.host));
+    if (g) keys.add(endpointMockKey('group:' + g.id, ek));
+    return [...keys];
+  }
+  function keyHoldingMock(url, method, id) {
+    return candidateMockKeys(url, method).find(k => getMocksByKey(k).some(m => m.id === id)) || mockKeyForUrl(url, method);
+  }
+
   // Public (url-based) surface used by the core request interceptor.
-  function getEndpointMocks(url, method) { return getMocksByKey(mockKeyForUrl(url, method)).slice(); }
+  function getEndpointMocks(url, method) {
+    const seen = new Set(), out = [];
+    candidateMockKeys(url, method).forEach(k => getMocksByKey(k).forEach(m => { if (!seen.has(m.id)) { seen.add(m.id); out.push(m); } }));
+    return out;
+  }
   function isEndpointDocumented(url, method) { return !!findDocumentedEndpoint(url, method); }
   function addEndpointMock(url, method, mock) { addMockByKey(mockKeyForUrl(url, method), mock); }
-  function updateEndpointMock(url, method, id, mock) { updateMockByKey(mockKeyForUrl(url, method), id, mock); }
-  function deleteEndpointMock(url, method, id) { deleteMockByKey(mockKeyForUrl(url, method), id); }
+  function updateEndpointMock(url, method, id, mock) { updateMockByKey(keyHoldingMock(url, method, id), id, mock); }
+  function deleteEndpointMock(url, method, id) { deleteMockByKey(keyHoldingMock(url, method, id), id); }
 
   // Recursively turns a schema (type names / nested shape) into a real,
   // editable JSON value — used to pre-fill a documented field the user just

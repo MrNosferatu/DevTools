@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — HTML
 // @namespace    http://tampermonkey.net/
-// @version      3.6.24
+// @version      3.6.25
 // @description  HTML template builders for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -699,6 +699,7 @@ const HTML = `
         <div class="dt-mockpick-list" id="dt-mockpick-list"></div>
       </div>
       <div class="dt-modal-foot" style="padding:12px 16px;gap:8px">
+        <button class="dt-foot-btn dt-foot-btn-send" id="dt-mockpick-add" style="flex:0 0 auto" title="Add a new per-URL mock for this endpoint">+ Add mock</button>
         <button class="dt-foot-btn dt-foot-btn-abort" id="dt-mockpick-delsel" style="flex:0 0 auto" disabled>Delete selected</button>
         <button class="dt-foot-btn dt-foot-btn-abort" id="dt-mockpick-close" style="flex:1">Close</button>
       </div>
