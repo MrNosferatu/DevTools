@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.24
+// @version      3.6.25
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -250,7 +250,13 @@
     if (!document.documentElement) return null;
     dtHost = document.createElement('div');
     dtHost.id = 'dt-host';
-    dtHost.style.cssText = 'all:initial'; // block inherited page styles from bleeding in
+    // Block inherited page styles from bleeding into the shadow tree. `!important`
+    // is required: some sites set broad rules like `* { pointer-events:none
+    // !important }` that would otherwise override a plain inline `all:initial`
+    // on the host and inherit inward (making our inputs unclickable/"disabled").
+    // Author rules can't target shadow descendants directly, so resetting the
+    // host's own inherited props is enough to fully isolate the UI.
+    dtHost.style.cssText = 'all:initial!important';
     dtRoot = dtHost.attachShadow({ mode: 'open' });
     // Single wrapper so descendant-combinator and :has() selectors (e.g. the
     // overlay-open z-index bump) have an element to scope against — a ShadowRoot
@@ -693,6 +699,8 @@
       $('dt-ff-overlay'),  // Form Autofill config modal — created at runtime by its
                            // plugin, so it must be themed live here too, not just
                            // mirrored once when it opens.
+      $('dt-mockpick-overlay'), // Mock Fail picker — a .dt-overlay, needs dt-dark
+                                // + custom vars toggled like the rest.
     ].filter(Boolean);
 
     themedEls.forEach(el => {
@@ -1533,6 +1541,7 @@
     $('dt-presets-overlay').addEventListener('click', e => { if(e.target.id==='dt-presets-overlay') closePresetsModal(); });
     // Mock Fail picker (secondary modal)
     $('dt-mockpick-close').addEventListener('click', () => closeMockPicker());
+    $('dt-mockpick-add').addEventListener('click', () => openMockPickAdd());
     $('dt-mockpick-overlay').addEventListener('click', e => { if(e.target.id==='dt-mockpick-overlay') closeMockPicker(); });
     $('dt-mockpick-delsel').addEventListener('click', () => {
       if (!_mockPick) return;
@@ -3555,11 +3564,9 @@
     const btn = $('dt-mockpick-delsel');
     if (btn) btn.disabled = !_mockPick || _mockPick.selected.size === 0;
   }
-  // Inline editor row for an editable candidate (endpoint / group / global).
-  function openMockPickEditor(row, c) {
-    if (!_mockPick) return;
-    const { req } = _mockPick;
-    const f = c.fields;
+  // Inline status/code/message/body/mode form, shared by Edit and Add. Calls
+  // onSave({status,code,message,body,mode}); Cancel just re-renders the list.
+  function buildMockForm(f, saveLabel, onSave) {
     const form = document.createElement('div');
     form.className = 'dt-rec-mock-form';
     form.innerHTML = `
@@ -3574,22 +3581,42 @@
       <input class="dt-baseurl-entry-url dt-mp-msg" placeholder="message — fills {{message}}" spellcheck="false" autocomplete="off">
       <textarea class="dt-baseurl-mock-input dt-mp-body" placeholder='{"success":false,"error":"{{message}}"}' spellcheck="false"></textarea>
       <div class="dt-rec-mock-form-actions">
-        <button class="dt-rec-mini-btn dt-mp-save" type="button">Save</button>
+        <button class="dt-rec-mini-btn dt-mp-save" type="button">${escHtml(saveLabel)}</button>
         <button class="dt-rec-mini-btn dt-mp-cancel" type="button">Cancel</button>
       </div>`;
-    form.querySelector('.dt-mp-status').value = f.status;
+    form.querySelector('.dt-mp-status').value = f.status != null ? f.status : 500;
     form.querySelector('.dt-mp-code').value = f.code || '';
     form.querySelector('.dt-mp-msg').value = f.message || '';
     form.querySelector('.dt-mp-body').value = f.body || '';
     let mode = f.mode === 'soft' ? 'soft' : 'hard';
     form.querySelectorAll('.dt-mp-mode .dt-side-btn').forEach(b => b.addEventListener('click', () => { mode = b.dataset.failmode; form.querySelectorAll('.dt-mp-mode .dt-side-btn').forEach(x => x.classList.toggle('active', x === b)); }));
     form.querySelector('.dt-mp-cancel').addEventListener('click', () => renderMockPicker());
-    form.querySelector('.dt-mp-save').addEventListener('click', () => {
-      const fields = { status: form.querySelector('.dt-mp-status').value, code: form.querySelector('.dt-mp-code').value, message: form.querySelector('.dt-mp-msg').value, body: form.querySelector('.dt-mp-body').value, mode };
-      saveMockCandidate(req.url, req.method, c.ref, fields);
+    form.querySelector('.dt-mp-save').addEventListener('click', () => onSave({
+      status: form.querySelector('.dt-mp-status').value, code: form.querySelector('.dt-mp-code').value,
+      message: form.querySelector('.dt-mp-msg').value, body: form.querySelector('.dt-mp-body').value, mode,
+    }));
+    return form;
+  }
+  // Inline editor row for an editable candidate (endpoint / group / global).
+  function openMockPickEditor(row, c) {
+    if (!_mockPick) return;
+    const { req } = _mockPick;
+    const form = buildMockForm(c.fields, 'Save', fields => { saveMockCandidate(req.url, req.method, c.ref, fields); renderMockPicker(); });
+    row.replaceWith(form);
+  }
+  // Add a brand-new per-URL (API Docs endpoint) mock straight from the picker.
+  function openMockPickAdd() {
+    if (!_mockPick) return;
+    const { req } = _mockPick;
+    const list = $('dt-mockpick-list');
+    if (!list) return;
+    const rec = recorderPluginRef();
+    const form = buildMockForm({ status: 500, code: '', message: '', body: '', mode: 'hard' }, 'Add', fields => {
+      if (rec && rec.addEndpointMock) rec.addEndpointMock(req.url, req.method, fields);
       renderMockPicker();
     });
-    row.replaceWith(form);
+    list.insertBefore(form, list.firstChild);
+    const s = form.querySelector('.dt-mp-status'); if (s) s.focus();
   }
   // A mock body that isn't valid JSON reads back as `null` for any consumer
   // using JSON parsing (fetch .json(), XHR responseType:'json', axios's default
