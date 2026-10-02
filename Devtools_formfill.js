@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — Form Autofill Plugin
 // @namespace    http://tampermonkey.net/
-// @version      3.6.26
+// @version      3.6.27
 // @description  Form Autofill plugin for DevTools Sidebar — detect forms on the page, configure per-field fill values (fixed text, dynamic tokens, or defaults for selects/radios/checkboxes), with URL-param conditions, and fill them automatically on load.
 // @author       MrNosferatu
 // ==/UserScript==
@@ -208,12 +208,20 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
 
   // Short, reasonably stable CSS selector for a container — the persisted key
   // for click-picked forms (so they re-detect on later visits).
+  // A framework-generated id (React useId, antd, Emotion, etc.) changes on every
+  // mount/render, so anchoring a persisted selector on it breaks on the next
+  // render. Only trust ids that look author-authored: start with a letter, word
+  // chars/hyphen only (excludes ":r0:"), and not the common "…_r_…"/"r<n>" shapes.
+  function stableId(id) {
+    return !!id && /^[A-Za-z][\w-]*$/.test(id) && id.length > 1
+      && !/(^|[_-])r[a-z0-9]*([_-]|$)/i.test(id) && !/^(ember|rc_|ant-)/i.test(id);
+  }
   function ffSelector(el) {
     if (!el || el === document.body || el.nodeType !== 1) return 'body';
     const parts = [];
     let node = el;
     for (let d = 0; node && node.nodeType === 1 && node !== document.body && d < 6; d++) {
-      if (node.id) { parts.unshift('#' + (window.CSS && CSS.escape ? CSS.escape(node.id) : node.id)); break; }
+      if (stableId(node.id)) { parts.unshift('#' + (window.CSS && CSS.escape ? CSS.escape(node.id) : node.id)); break; }
       let sel = node.tagName.toLowerCase();
       const nm = node.getAttribute && node.getAttribute('name');
       if (nm) { parts.unshift(sel + `[name="${nm}"]`); break; }
@@ -341,7 +349,14 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
     });
     picked.forEach((label, key) => {
       if (out.some(o => o.key === key)) return;
-      let c = null; try { c = document.querySelector(key.slice(5)); } catch {}
+      // Prefer the live element captured at pick time (survives SPA re-renders
+      // that break the CSS selector); fall back to the selector across reloads.
+      let c = pickedEls.get(key);
+      if (!c || !document.contains(c)) {
+        c = null;
+        try { c = document.querySelector(key.slice(5)); } catch {}
+        if (c) pickedEls.set(key, c);
+      }
       if (!c) return;
       const fields = collectFields(c);
       if (fields.length) out.push({ key, label: label || ffContainerLabel(c) || 'Picked form', fields });
@@ -354,6 +369,11 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
   // the user point at the real thing. Hover highlights the nearest form-ish
   // container; click configures its fields; Esc cancels.
   let _pickActive = false;
+  // Live element refs for picked forms, keyed by their pick: key. The persisted
+  // CSS selector is a cross-reload fallback, but on SPA pages (antd etc.) it can
+  // stop matching after a re-render — so within a session we resolve the actual
+  // element directly, which makes "Fill now" right after picking reliable.
+  const pickedEls = new Map();
   function ffPickTarget(el) {
     if (!el || el.nodeType !== 1) return null;
     if (el.closest('[id^="dt-"]')) return null; // never our own sidebar/overlay
@@ -401,9 +421,11 @@ DT_registerPlugin(function createFormFillPlugin(ctx) {
   }
   function finishFormPick(container) {
     const fields = collectFields(container);
+    if (!fields.length) { renderDetected(); return; }
+    const key = 'pick:' + ffSelector(container);
+    pickedEls.set(key, container); // live ref so Fill-now works even if the selector is fragile
     renderDetected();
-    if (!fields.length) return;
-    openEditor({ key: 'pick:' + ffSelector(container), label: ffContainerLabel(container) || 'Picked form', fields });
+    openEditor({ key, label: ffContainerLabel(container) || 'Picked form', fields });
   }
 
   // ─── Template engine ─────────────────────────────────────────────────────────
