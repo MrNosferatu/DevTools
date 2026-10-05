@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.27
+// @version      3.6.28
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -1866,7 +1866,11 @@
   // jump=false here: re-running search on every keystroke keeps highlights/count
   // accurate as matches shift, but must NOT move the caret away from wherever
   // the user is actually typing (that's a content edit, not a search action).
-  function onEditorChange(id, sk) { updateBadge(id); if(state[sk].term) runSearch(id,sk,state[sk].term,false); else renderHL(id,sk,''); }
+  // Search visibility is the single source of truth: only re-highlight while
+  // the Find bar is open, so a stale term can never keep "searching" (marks /
+  // live re-highlight) under a hidden bar.
+  function isSearchOpen(id) { const b=$(`${id}-sbar`); return !!b && !b.classList.contains('hidden'); }
+  function onEditorChange(id, sk) { updateBadge(id); if(isSearchOpen(id) && state[sk].term) runSearch(id,sk,state[sk].term,false); else renderHL(id,sk,''); }
   function updateBadge(id) {
     const el=$(`${id}-badge`); if(!el) return;
     const val=$(id).value;
@@ -1878,8 +1882,15 @@
 
   // ─── Search ───────────────────────────────────────────────────────────────────
   function openSearch(id) { $(`${id}-sbar`).classList.remove('hidden'); $(`${id}-stoggle`).classList.add('active'); const inp=$(`${id}-sinput`);inp.focus();inp.select(); }
-  function closeSearch(id,sk) { $(`${id}-sbar`).classList.add('hidden'); $(`${id}-stoggle`).classList.remove('active'); if(cmEditors[id])cmClearMarks(sk); state[sk]={term:'',matchIndex:0,matches:[]}; if(!cmEditors[id])renderHL(id,sk,''); const c=$(`${id}-scount`);if(c){c.textContent='—';c.className='dt-search-count';} }
+  function closeSearch(id,sk) { $(`${id}-sbar`).classList.add('hidden'); $(`${id}-stoggle`).classList.remove('active'); if(cmEditors[id])cmClearMarks(sk); state[sk]={term:'',matchIndex:0,matches:[]}; const si=$(`${id}-sinput`); if(si)si.value=''; if(!cmEditors[id])renderHL(id,sk,''); const c=$(`${id}-scount`);if(c){c.textContent='—';c.className='dt-search-count';} }
   function toggleSearch(id) { const bar=$(`${id}-sbar`); const sk=id.startsWith('dt-req')?'reqSearch':'resSearch'; bar.classList.contains('hidden')?openSearch(id):closeSearch(id,sk); }
+  // Realign search state to the bar's visibility when a modal (re)opens for new
+  // content: hidden bar ⇒ no active search; open bar ⇒ re-run against the new
+  // text. Prevents the bar/search-state desync across modal open and queue nav.
+  function syncEditorSearch(id, sk) {
+    if (isSearchOpen(id)) { const term = ($(`${id}-sinput`)||{}).value || ''; state[sk].term = term; runSearch(id, sk, term, false); }
+    else { if (cmEditors[id]) cmClearMarks(sk); state[sk] = { term:'', matchIndex:0, matches:[] }; renderHL(id, sk, ''); const c=$(`${id}-scount`); if(c){c.textContent='—';c.className='dt-search-count';} }
+  }
   function runSearch(id,sk,term,jump) { if(jump===undefined)jump=true; if(cmEditors[id]){cmRunSearch(id,sk,term,jump);return;} state[sk].term=term;state[sk].matches=[];state[sk].matchIndex=0; if(!term){renderHL(id,sk,'');updateSCount(id,sk);return;} const text=$(id).value,lower=text.toLowerCase(),q=term.toLowerCase();let pos=0;while((pos=lower.indexOf(q,pos))!==-1){state[sk].matches.push(pos);pos+=q.length;} renderHL(id,sk,term);updateSCount(id,sk);if(jump)scrollToMatch(id,sk); }
   function renderHL(id,sk,term) { if(cmEditors[id]){if(!term)cmClearMarks(sk);return;} const ov=$(`${id}-hl`),ed=$(id);if(!ov||!ed)return; if(!term||!state[sk].matches.length){ov.innerHTML=escHtml(ed.value);return;} const text=ed.value,q=term.toLowerCase(),ql=q.length;let res='',cur=0;state[sk].matches.forEach((pos,i)=>{res+=escHtml(text.slice(cur,pos));res+=`<mark class="${i===state[sk].matchIndex?'current':''}">${escHtml(text.slice(pos,pos+ql))}</mark>`;cur=pos+ql;});res+=escHtml(text.slice(cur));ov.innerHTML=res;syncOvScroll(id); }
   function searchNext(id,sk) { if(!state[sk].matches.length)return;state[sk].matchIndex=(state[sk].matchIndex+1)%state[sk].matches.length; if(cmEditors[id]){updateSCount(id,sk);cmScrollToMatch(id,sk);return;} renderHL(id,sk,state[sk].term);updateSCount(id,sk);scrollToMatch(id,sk); }
@@ -2599,7 +2610,7 @@
       if (docSuggestions) renderParamSuggestions('dt-req-params-list', docSuggestions.query);
     }else{
       $('dt-req-editor-section').style.display='flex';$('dt-req-params-section').style.display='none';
-      $('dt-req-ed').value=req._draftBody!=null?req._draftBody:body;updateBadge('dt-req-ed');renderHL('dt-req-ed','reqSearch','');refreshCM('dt-req-ed');
+      $('dt-req-ed').value=req._draftBody!=null?req._draftBody:body;updateBadge('dt-req-ed');renderHL('dt-req-ed','reqSearch','');refreshCM('dt-req-ed');syncEditorSearch('dt-req-ed','reqSearch');
       renderBodySuggestions(docSuggestions ? docSuggestions.body : null);
       renderEditSuggestions('req');
     }
@@ -2740,7 +2751,7 @@
     $('dt-res-transform-err').className='dt-transform-err';
     $('dt-res-wrap-key').style.display='none';
     let body=res.body||'';try{body=JSON.stringify(JSON.parse(body),null,2);}catch{}
-    $('dt-res-ed').value=body;updateBadge('dt-res-ed');renderHL('dt-res-ed','resSearch','');refreshCM('dt-res-ed');
+    $('dt-res-ed').value=body;updateBadge('dt-res-ed');renderHL('dt-res-ed','resSearch','');refreshCM('dt-res-ed');syncEditorSearch('dt-res-ed','resSearch');
     autoSizeResEditor();
     renderEditSuggestions('res');
     populateHeaders('dt-res-hinner','dt-res-hcount',res.headers,'dt-res-hrevert');
