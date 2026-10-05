@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar — CSS
 // @namespace    http://tampermonkey.net/
-// @version      3.6.29
+// @version      3.6.30
 // @description  Styles for DevTools Sidebar
 // @author       MrNosferatu
 // ==/UserScript==
@@ -274,7 +274,7 @@ const CSS = `
   #dt-root:has(.dt-overlay.visible) #dt-tab { z-index:999995 !important; }
 
   /* Modal — resizable, fixed initial size */
-  .dt-modal { position:relative; z-index:1; width:700px; height:620px; min-width:500px; min-height:400px; max-width:98vw; max-height:96vh; background:var(--bg); border:1px solid var(--bd); border-radius:14px; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 20px 60px rgba(0,0,0,.18),0 4px 16px rgba(0,0,0,.08); transform:translateY(10px) scale(.98); resize:both; }
+  .dt-modal { position:relative; z-index:1; width:700px; height:auto; min-width:500px; min-height:400px; max-width:98vw; max-height:96vh; background:var(--bg); border:1px solid var(--bd); border-radius:14px; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 20px 60px rgba(0,0,0,.18),0 4px 16px rgba(0,0,0,.08); transform:translateY(10px) scale(.98); resize:both; }
   .dt-overlay.visible .dt-modal { transform:translateY(0) scale(1); }
   .dt-modal-head { padding:16px 18px 14px; border-bottom:1px solid var(--bd); display:flex; align-items:flex-start; gap:12px; flex-shrink:0; background:var(--sf); }
   .dt-modal-icon { width:36px; height:36px; border-radius:9px; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:calc(16px*var(--dt-fs,1)); }
