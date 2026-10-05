@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         DevTools Sidebar
 // @namespace    http://tampermonkey.net/
-// @version      3.6.28
+// @version      3.6.30
 // @description  Some tools for web development
 // @author       MrNosferatu
 // @match        http://*/*
@@ -1955,18 +1955,24 @@
   // box that needed manual resizing. Only the response manual editor — its
   // section doesn't flex-fill the modal the way the request editor does.
   function autoSizeResEditor() {
-    const wrap = $('dt-res-ed-wrap'), ta = $('dt-res-ed'), cm = cmEditors['dt-res-ed'];
+    const wrap = $('dt-res-ed-wrap'), outer = $('dt-res-ed-outer'), ta = $('dt-res-ed'), cm = cmEditors['dt-res-ed'];
     let vh = 600; try { vh = (dtRoot && dtRoot.ownerDocument.defaultView || window).innerHeight || 600; } catch {}
     const maxH = Math.max(220, Math.round(vh * 0.55)), minH = 160;
     requestAnimationFrame(() => {
       try {
+        // Size the editor AREA (the -outer box) only, and let the wrap grow to
+        // its content. The toolbar (Format/Minify/Find) and the Find bar are
+        // siblings BELOW the editor inside the overflow:hidden wrap — sizing the
+        // wrap itself to the editor height (as before) clipped them, which hid
+        // the Find bar while its search stayed active.
+        if (wrap) { wrap.style.flex = 'none'; wrap.style.height = 'auto'; }
         if (cm) {
           const lineH = cm.defaultTextHeight() || 18;
           const h = Math.min(maxH, Math.max(minH, cm.lineCount() * lineH + 26));
-          if (wrap) { wrap.style.flex = 'none'; wrap.style.height = h + 'px'; }
+          if (outer) { outer.style.flex = 'none'; outer.style.height = h + 'px'; }
           cm.setSize(null, h); cm.refresh();
         } else if (ta) {
-          if (wrap) { wrap.style.flex = 'none'; wrap.style.height = 'auto'; }
+          if (outer) { outer.style.flex = 'none'; outer.style.height = 'auto'; }
           ta.style.height = 'auto';
           ta.style.height = Math.min(maxH, Math.max(minH, ta.scrollHeight + 8)) + 'px';
         }
